@@ -77,6 +77,7 @@ fun MediaVideoView(
             player = player,
             localMedia = localMedia,
             autoplay = autoplay,
+            audioFocus = audioFocus,
             modifier = modifier,
         )
     }
@@ -91,6 +92,7 @@ private fun ServicePlayerMediaVideoView(
     player: Player,
     localMedia: LocalMedia?,
     autoplay: Boolean,
+    audioFocus: AudioFocus?,
     modifier: Modifier = Modifier,
 ) {
     var mediaPlayerControllerState: MediaPlayerControllerState by remember {
@@ -229,7 +231,7 @@ private fun ServicePlayerMediaVideoView(
                 autoHideController++
                 player.volume = if (player.volume == 1f) 0f else 1f
             },
-            audioFocus = null,
+            audioFocus = audioFocus,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)

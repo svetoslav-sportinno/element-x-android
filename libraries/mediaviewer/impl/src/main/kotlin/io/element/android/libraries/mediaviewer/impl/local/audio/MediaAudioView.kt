@@ -93,6 +93,7 @@ fun MediaAudioView(
             player = player,
             localMedia = localMedia,
             info = info,
+            audioFocus = audioFocus,
             modifier = modifier,
         )
     }
@@ -107,6 +108,7 @@ private fun ServicePlayerMediaAudioView(
     player: Player,
     localMedia: LocalMedia?,
     info: MediaInfo?,
+    audioFocus: AudioFocus?,
     modifier: Modifier = Modifier,
 ) {
     var mediaPlayerControllerState: MediaPlayerControllerState by remember {
@@ -300,7 +302,7 @@ private fun ServicePlayerMediaAudioView(
             onToggleMute = {
                 // Cannot happen for audio files
             },
-            audioFocus = null,
+            audioFocus = audioFocus,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
