@@ -10,6 +10,7 @@
 
 package io.element.android.libraries.mediaviewer.impl.viewer
 
+import android.content.Intent
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -17,6 +18,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -28,6 +30,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -42,6 +45,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
@@ -56,6 +60,7 @@ import io.element.android.compound.tokens.generated.CompoundIcons
 import io.element.android.features.viewfolder.api.TextFileViewer
 import io.element.android.libraries.architecture.AsyncData
 import io.element.android.libraries.core.mimetype.MimeTypes
+import io.element.android.libraries.core.mimetype.MimeTypes.isMimeTypeAudio
 import io.element.android.libraries.core.mimetype.MimeTypes.isMimeTypeVideo
 import io.element.android.libraries.designsystem.components.async.AsyncFailure
 import io.element.android.libraries.designsystem.components.async.AsyncLoading
@@ -80,6 +85,9 @@ import io.element.android.libraries.mediaviewer.impl.details.MediaDeleteConfirma
 import io.element.android.libraries.mediaviewer.impl.details.MediaDetailsBottomSheet
 import io.element.android.libraries.mediaviewer.impl.local.LocalMediaView
 import io.element.android.libraries.mediaviewer.impl.local.PlayableState
+import io.element.android.libraries.mediaviewer.impl.local.player.LocalMediaPlaybackContext
+import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlaybackContext
+import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlaybackService
 import io.element.android.libraries.mediaviewer.impl.local.rememberLocalMediaViewState
 import io.element.android.libraries.mediaviewer.impl.util.bgCanvasWithTransparency
 import io.element.android.libraries.ui.strings.CommonStrings
@@ -97,6 +105,7 @@ fun MediaViewerView(
     onBackClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
     val snackbarHostState = rememberSnackbarHostState(snackbarMessage = state.snackbarMessage)
     var showOverlay by remember { mutableStateOf(true) }
 
@@ -143,6 +152,13 @@ fun MediaViewerView(
                     LaunchedEffect(Unit) {
                         state.eventSink(MediaViewerEvents.LoadMedia(dataForPage))
                     }
+                    CompositionLocalProvider(
+                        LocalMediaPlaybackContext provides MediaPlaybackContext(
+                            sessionId = state.sessionId,
+                            roomId = state.roomId,
+                            eventId = dataForPage.eventId?.value.orEmpty(),
+                        )
+                    ) {
                     Box(
                         modifier = Modifier.fillMaxSize()
                     ) {
@@ -185,6 +201,7 @@ fun MediaViewerView(
                             }
                         }
                     }
+                    } // CompositionLocalProvider
                 }
             }
         }
@@ -197,10 +214,19 @@ fun MediaViewerView(
             ) {
                 when (currentData) {
                     is MediaViewerPageData.MediaViewerData -> {
+                        val mimeType = currentData.mediaInfo.mimeType
+                        val showStopButton = mimeType.isMimeTypeVideo() || mimeType.isMimeTypeAudio()
                         MediaViewerTopBar(
                             data = currentData,
                             canShowInfo = state.canShowInfo,
+                            showStopButton = showStopButton,
                             onBackClick = onBackClick,
+                            onStopClick = {
+                                context.stopService(
+                                    Intent(context, MediaPlaybackService::class.java)
+                                )
+                                onBackClick()
+                            },
                             onInfoClick = {
                                 state.eventSink(MediaViewerEvents.OpenInfo(currentData))
                             },
@@ -441,7 +467,9 @@ private fun rememberShowProgress(downloadedMedia: AsyncData<LocalMedia>): Boolea
 private fun MediaViewerTopBar(
     data: MediaViewerPageData.MediaViewerData,
     canShowInfo: Boolean,
+    showStopButton: Boolean,
     onBackClick: () -> Unit,
+    onStopClick: () -> Unit,
     onInfoClick: () -> Unit,
     eventSink: (MediaViewerEvents) -> Unit,
 ) {
@@ -480,7 +508,19 @@ private fun MediaViewerTopBar(
         colors = TopAppBarDefaults.topAppBarColors(
             containerColor = bgCanvasWithTransparency,
         ),
-        navigationIcon = { BackButton(onClick = onBackClick) },
+        navigationIcon = {
+            Row {
+                BackButton(onClick = onBackClick)
+                if (showStopButton) {
+                    IconButton(onClick = onStopClick) {
+                        Icon(
+                            imageVector = CompoundIcons.Close(),
+                            contentDescription = stringResource(R.string.action_stop_media_playback),
+                        )
+                    }
+                }
+            }
+        },
         actions = {
             IconButton(
                 enabled = actionsEnabled,

@@ -9,6 +9,7 @@
 package io.element.android.libraries.mediaviewer.impl.local.audio
 
 import android.annotation.SuppressLint
+import android.os.Bundle
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
@@ -63,6 +64,7 @@ import io.element.android.libraries.mediaviewer.api.helper.formatFileExtensionAn
 import io.element.android.libraries.mediaviewer.api.local.LocalMedia
 import io.element.android.libraries.mediaviewer.impl.local.LocalMediaViewState
 import io.element.android.libraries.mediaviewer.impl.local.PlayableState
+import io.element.android.libraries.mediaviewer.impl.local.player.LocalMediaPlaybackContext
 import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlayerControllerState
 import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlayerControllerView
 import io.element.android.libraries.mediaviewer.impl.local.player.rememberMediaServicePlayer
@@ -185,9 +187,23 @@ private fun ServicePlayerMediaAudioView(
             player.pause()
         }
     }
+    val playbackContext = LocalMediaPlaybackContext.current
     if (localMedia?.uri != null && isDisplayed) {
         LaunchedEffect(localMedia.uri) {
-            val mediaItem = MediaItem.fromUri(localMedia.uri)
+            val extras = Bundle().apply {
+                putString("sessionId", playbackContext.sessionId)
+                putString("roomId", playbackContext.roomId)
+                putString("eventId", playbackContext.eventId)
+            }
+            val metadata = MediaMetadata.Builder()
+                .setTitle(info?.filename ?: localMedia.info.filename)
+                .setArtist(info?.senderName ?: localMedia.info.senderName)
+                .setExtras(extras)
+                .build()
+            val mediaItem = MediaItem.Builder()
+                .setUri(localMedia.uri)
+                .setMediaMetadata(metadata)
+                .build()
             player.setMediaItem(mediaItem)
             player.prepare()
         }

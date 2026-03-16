@@ -204,6 +204,8 @@ fun aMediaViewerState(
     mediaBottomSheetState: MediaBottomSheetState = MediaBottomSheetState.Hidden,
     eventSink: (MediaViewerEvents) -> Unit = {},
 ) = MediaViewerState(
+    sessionId = "@alice:server.org",
+    roomId = "!room:server.org",
     initiallySelectedEventId = EventId("\$a:b"),
     listData = listData.toImmutableList(),
     currentIndex = currentIndex,
