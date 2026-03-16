@@ -9,7 +9,6 @@
 package io.element.android.libraries.mediaviewer.impl.local.video
 
 import android.annotation.SuppressLint
-import android.os.Bundle
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
@@ -32,7 +31,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
-import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Player.STATE_READY
 import androidx.media3.common.Timeline
@@ -47,7 +45,6 @@ import io.element.android.libraries.designsystem.utils.KeepScreenOn
 import io.element.android.libraries.mediaviewer.api.local.LocalMedia
 import io.element.android.libraries.mediaviewer.impl.local.LocalMediaViewState
 import io.element.android.libraries.mediaviewer.impl.local.PlayableState
-import io.element.android.libraries.mediaviewer.impl.local.player.LocalMediaPlaybackContext
 import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlayerControllerState
 import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlayerControllerView
 import io.element.android.libraries.mediaviewer.impl.local.player.rememberMediaServicePlayer
@@ -166,23 +163,9 @@ private fun ServicePlayerMediaVideoView(
         }
     }
 
-    val playbackContext = LocalMediaPlaybackContext.current
     if (localMedia?.uri != null && isDisplayed) {
         LaunchedEffect(localMedia.uri) {
-            val extras = Bundle().apply {
-                putString("sessionId", playbackContext.sessionId)
-                putString("roomId", playbackContext.roomId)
-                putString("eventId", playbackContext.eventId)
-            }
-            val metadata = MediaMetadata.Builder()
-                .setTitle(localMedia.info.filename)
-                .setArtist(localMedia.info.senderName)
-                .setExtras(extras)
-                .build()
-            val mediaItem = MediaItem.Builder()
-                .setUri(localMedia.uri)
-                .setMediaMetadata(metadata)
-                .build()
+            val mediaItem = MediaItem.fromUri(localMedia.uri)
             player.setMediaItem(mediaItem)
             player.prepare()
         }

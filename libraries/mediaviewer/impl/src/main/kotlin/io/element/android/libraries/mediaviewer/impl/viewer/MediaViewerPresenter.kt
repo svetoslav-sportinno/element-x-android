@@ -162,8 +162,6 @@ class MediaViewerPresenter(
         }
 
         return MediaViewerState(
-            sessionId = room.sessionId.value,
-            roomId = room.roomId.value,
             initiallySelectedEventId = inputs.eventId,
             listData = data.value,
             currentIndex = currentIndex.intValue,
