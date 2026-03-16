@@ -9,7 +9,6 @@ package io.element.android.libraries.mediaviewer.impl.local.player
 
 import android.app.PendingIntent
 import android.content.Intent
-import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
@@ -51,14 +50,9 @@ class MediaPlaybackService : MediaSessionService() {
     }
 
     private fun updateSessionActivity(metadata: MediaMetadata) {
-        val extras = metadata.extras ?: return
-        val sessionId = extras.getString("sessionId") ?: return
-        val roomId = extras.getString("roomId") ?: return
-        val deepLinkUri = "elementx://open/$sessionId/$roomId".toUri()
-        val intent = Intent(Intent.ACTION_VIEW, deepLinkUri).apply {
-            setPackage(packageName)
-            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
+        if (metadata.extras?.containsKey("sessionId") != true) return
+        // Bring the existing app task to the foreground (the media viewer is likely still on the nav stack).
+        val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return
         val pendingIntent = PendingIntent.getActivity(
             this,
             0,

@@ -169,7 +169,11 @@ private fun ServicePlayerMediaAudioView(
             }
 
             override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
-                metadata = mediaMetadata
+                // Only update UI metadata from file-embedded metadata (e.g. ID3 tags),
+                // not from our notification metadata which has custom extras.
+                if (mediaMetadata.extras?.containsKey("sessionId") != true) {
+                    metadata = mediaMetadata
+                }
             }
         }
     }
