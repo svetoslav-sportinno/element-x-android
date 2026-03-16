@@ -9,6 +9,8 @@
 package io.element.android.libraries.mediaviewer.impl.local.audio
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.os.Bundle
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.view.ViewGroup.LayoutParams.WRAP_CONTENT
 import android.widget.FrameLayout
@@ -50,19 +52,26 @@ import androidx.media3.common.Player
 import androidx.media3.common.Timeline
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.toBitmap
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.compound.tokens.generated.CompoundIcons
+import io.element.android.libraries.core.data.tryOrNull
 import io.element.android.libraries.designsystem.components.media.WaveformPlaybackView
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.text.toDp
 import io.element.android.libraries.designsystem.theme.components.Icon
 import io.element.android.libraries.designsystem.theme.components.Text
+import io.element.android.libraries.matrix.api.media.MediaSource
+import io.element.android.libraries.matrix.ui.media.MediaRequestData
 import io.element.android.libraries.mediaviewer.api.MediaInfo
 import io.element.android.libraries.mediaviewer.api.helper.formatFileExtensionAndSize
 import io.element.android.libraries.mediaviewer.api.local.LocalMedia
 import io.element.android.libraries.mediaviewer.impl.local.LocalMediaViewState
 import io.element.android.libraries.mediaviewer.impl.local.PlayableState
+import io.element.android.libraries.mediaviewer.impl.local.player.LocalMediaPlaybackContext
 import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlayerControllerState
 import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlayerControllerView
 import io.element.android.libraries.mediaviewer.impl.local.player.rememberMediaServicePlayer
@@ -71,6 +80,7 @@ import io.element.android.libraries.mediaviewer.impl.local.player.togglePlay
 import io.element.android.libraries.mediaviewer.impl.local.rememberLocalMediaViewState
 import kotlinx.collections.immutable.toImmutableList
 import kotlinx.coroutines.delay
+import java.io.ByteArrayOutputStream
 
 @SuppressLint("UnsafeOptInUsageError")
 @Composable
@@ -185,9 +195,41 @@ private fun ServicePlayerMediaAudioView(
             player.pause()
         }
     }
+    val playbackContext = LocalMediaPlaybackContext.current
+    val context = LocalContext.current
     if (localMedia?.uri != null && isDisplayed) {
         LaunchedEffect(localMedia.uri) {
-            val mediaItem = MediaItem.fromUri(localMedia.uri)
+            val artworkSource = playbackContext.roomAvatarUrl?.let { MediaSource(it) }
+            val artworkBytes = artworkSource?.let { source ->
+                tryOrNull {
+                    val request = ImageRequest.Builder(context)
+                        .data(MediaRequestData(source, MediaRequestData.Kind.Thumbnail(256, 256)))
+                        .build()
+                    val result = context.imageLoader.execute(request)
+                    result.image?.toBitmap()?.let { bitmap ->
+                        ByteArrayOutputStream().use { stream ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                            stream.toByteArray()
+                        }
+                    }
+                }
+            }
+            val extras = Bundle().apply {
+                putString("sessionId", playbackContext.sessionId)
+                putString("roomId", playbackContext.roomId)
+                putString("eventId", playbackContext.eventId)
+            }
+            val displayInfo = info ?: localMedia.info
+            val mediaMetadata = MediaMetadata.Builder()
+                .setTitle(displayInfo.filename)
+                .setArtist(displayInfo.senderName)
+                .apply { artworkBytes?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
+                .setExtras(extras)
+                .build()
+            val mediaItem = MediaItem.Builder()
+                .setUri(localMedia.uri)
+                .setMediaMetadata(mediaMetadata)
+                .build()
             player.setMediaItem(mediaItem)
             player.prepare()
         }
@@ -196,7 +238,6 @@ private fun ServicePlayerMediaAudioView(
     } else {
         player.setMediaItems(emptyList())
     }
-    val context = LocalContext.current
     val waveform = info?.waveform
     Box(
         modifier = modifier

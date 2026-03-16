@@ -9,6 +9,8 @@
 package io.element.android.libraries.mediaviewer.impl.local.video
 
 import android.annotation.SuppressLint
+import android.graphics.Bitmap
+import android.os.Bundle
 import android.view.ViewGroup.LayoutParams.MATCH_PARENT
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
@@ -31,20 +33,27 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.common.Player.STATE_READY
 import androidx.media3.common.Timeline
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
+import coil3.imageLoader
+import coil3.request.ImageRequest
+import coil3.toBitmap
 import io.element.android.compound.theme.ElementTheme
+import io.element.android.libraries.core.data.tryOrNull
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.text.toDp
 import io.element.android.libraries.designsystem.theme.components.Text
 import io.element.android.libraries.designsystem.utils.KeepScreenOn
+import io.element.android.libraries.matrix.ui.media.MediaRequestData
 import io.element.android.libraries.mediaviewer.api.local.LocalMedia
 import io.element.android.libraries.mediaviewer.impl.local.LocalMediaViewState
 import io.element.android.libraries.mediaviewer.impl.local.PlayableState
+import io.element.android.libraries.mediaviewer.impl.local.player.LocalMediaPlaybackContext
 import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlayerControllerState
 import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlayerControllerView
 import io.element.android.libraries.mediaviewer.impl.local.player.rememberMediaServicePlayer
@@ -54,6 +63,7 @@ import io.element.android.libraries.mediaviewer.impl.local.rememberLocalMediaVie
 import kotlinx.coroutines.delay
 import me.saket.telephoto.zoomable.zoomable
 import timber.log.Timber
+import java.io.ByteArrayOutputStream
 import kotlin.time.Duration.Companion.seconds
 
 @SuppressLint("UnsafeOptInUsageError")
@@ -163,9 +173,39 @@ private fun ServicePlayerMediaVideoView(
         }
     }
 
+    val playbackContext = LocalMediaPlaybackContext.current
+    val context = LocalContext.current
     if (localMedia?.uri != null && isDisplayed) {
         LaunchedEffect(localMedia.uri) {
-            val mediaItem = MediaItem.fromUri(localMedia.uri)
+            val artworkBytes = playbackContext.thumbnailSource?.let { source ->
+                tryOrNull {
+                    val request = ImageRequest.Builder(context)
+                        .data(MediaRequestData(source, MediaRequestData.Kind.Thumbnail(256, 256)))
+                        .build()
+                    val result = context.imageLoader.execute(request)
+                    result.image?.toBitmap()?.let { bitmap ->
+                        ByteArrayOutputStream().use { stream ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                            stream.toByteArray()
+                        }
+                    }
+                }
+            }
+            val extras = Bundle().apply {
+                putString("sessionId", playbackContext.sessionId)
+                putString("roomId", playbackContext.roomId)
+                putString("eventId", playbackContext.eventId)
+            }
+            val metadata = MediaMetadata.Builder()
+                .setTitle(localMedia.info.filename)
+                .setArtist(localMedia.info.senderName)
+                .apply { artworkBytes?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
+                .setExtras(extras)
+                .build()
+            val mediaItem = MediaItem.Builder()
+                .setUri(localMedia.uri)
+                .setMediaMetadata(metadata)
+                .build()
             player.setMediaItem(mediaItem)
             player.prepare()
         }
@@ -179,7 +219,6 @@ private fun ServicePlayerMediaVideoView(
         modifier = modifier
             .background(ElementTheme.colors.bgSubtlePrimary),
     ) {
-        val context = LocalContext.current
         if (LocalInspectionMode.current) {
             Text(
                 modifier = Modifier

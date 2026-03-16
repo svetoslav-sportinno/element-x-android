@@ -210,5 +210,8 @@ fun aMediaViewerState(
     snackbarMessage = null,
     canShowInfo = canShowInfo,
     mediaBottomSheetState = mediaBottomSheetState,
+    sessionId = "@alice:matrix.org",
+    roomId = "!room:matrix.org",
+    roomAvatarUrl = null,
     eventSink = eventSink,
 )

@@ -28,6 +28,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -80,6 +81,8 @@ import io.element.android.libraries.mediaviewer.impl.details.MediaDeleteConfirma
 import io.element.android.libraries.mediaviewer.impl.details.MediaDetailsBottomSheet
 import io.element.android.libraries.mediaviewer.impl.local.LocalMediaView
 import io.element.android.libraries.mediaviewer.impl.local.PlayableState
+import io.element.android.libraries.mediaviewer.impl.local.player.LocalMediaPlaybackContext
+import io.element.android.libraries.mediaviewer.impl.local.player.MediaPlaybackContext
 import io.element.android.libraries.mediaviewer.impl.local.rememberLocalMediaViewState
 import io.element.android.libraries.mediaviewer.impl.util.bgCanvasWithTransparency
 import io.element.android.libraries.ui.strings.CommonStrings
@@ -143,45 +146,56 @@ fun MediaViewerView(
                     LaunchedEffect(Unit) {
                         state.eventSink(MediaViewerEvents.LoadMedia(dataForPage))
                     }
-                    Box(
-                        modifier = Modifier.fillMaxSize()
-                    ) {
-                        val isDisplayed = remember(pagerState.settledPage) {
-                            // This 'item provider' lambda will be called when the data source changes with an outdated `settlePage` value
-                            // So we need to update this value only when the `settledPage` value changes. It seems like a bug that needs to be fixed in Compose.
-                            page == pagerState.settledPage
-                        }
-                        MediaViewerPage(
-                            isDisplayed = isDisplayed,
-                            showOverlay = showOverlay,
-                            bottomPaddingInPixels = bottomPaddingInPixels,
-                            data = dataForPage,
-                            textFileViewer = textFileViewer,
-                            onDismiss = onBackClick,
-                            onRetry = {
-                                state.eventSink(MediaViewerEvents.LoadMedia(dataForPage))
-                            },
-                            onDismissError = {
-                                state.eventSink(MediaViewerEvents.ClearLoadingError(dataForPage))
-                            },
-                            onShowOverlayChange = {
-                                showOverlay = it
-                            },
-                            isUserSelected = (state.listData[page] as? MediaViewerPageData.MediaViewerData)?.eventId == state.initiallySelectedEventId,
+                    CompositionLocalProvider(
+                        LocalMediaPlaybackContext provides MediaPlaybackContext(
+                            sessionId = state.sessionId,
+                            roomId = state.roomId,
+                            eventId = dataForPage.eventId?.value.orEmpty(),
+                            thumbnailSource = dataForPage.thumbnailSource,
+                            roomAvatarUrl = state.roomAvatarUrl,
                         )
-                        // Bottom bar
-                        AnimatedVisibility(visible = showOverlay, enter = fadeIn(), exit = fadeOut()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .navigationBarsPadding()
-                            ) {
-                                MediaViewerBottomBar(
-                                    modifier = Modifier.align(Alignment.BottomCenter),
-                                    showDivider = dataForPage.mediaInfo.mimeType.isMimeTypeVideo(),
-                                    caption = dataForPage.mediaInfo.caption,
-                                    onHeightChange = { bottomPaddingInPixels = it },
-                                )
+                    ) {
+                        Box(
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            val isDisplayed = remember(pagerState.settledPage) {
+                                // This 'item provider' lambda will be called when the data source
+                                // changes with an outdated `settlePage` value. So we need to update
+                                // this value only when the `settledPage` value changes.
+                                page == pagerState.settledPage
+                            }
+                            MediaViewerPage(
+                                isDisplayed = isDisplayed,
+                                showOverlay = showOverlay,
+                                bottomPaddingInPixels = bottomPaddingInPixels,
+                                data = dataForPage,
+                                textFileViewer = textFileViewer,
+                                onDismiss = onBackClick,
+                                onRetry = {
+                                    state.eventSink(MediaViewerEvents.LoadMedia(dataForPage))
+                                },
+                                onDismissError = {
+                                    state.eventSink(MediaViewerEvents.ClearLoadingError(dataForPage))
+                                },
+                                onShowOverlayChange = {
+                                    showOverlay = it
+                                },
+                                isUserSelected = (state.listData[page] as? MediaViewerPageData.MediaViewerData)?.eventId == state.initiallySelectedEventId,
+                            )
+                            // Bottom bar
+                            AnimatedVisibility(visible = showOverlay, enter = fadeIn(), exit = fadeOut()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .navigationBarsPadding()
+                                ) {
+                                    MediaViewerBottomBar(
+                                        modifier = Modifier.align(Alignment.BottomCenter),
+                                        showDivider = dataForPage.mediaInfo.mimeType.isMimeTypeVideo(),
+                                        caption = dataForPage.mediaInfo.caption,
+                                        onHeightChange = { bottomPaddingInPixels = it },
+                                    )
+                                }
                             }
                         }
                     }

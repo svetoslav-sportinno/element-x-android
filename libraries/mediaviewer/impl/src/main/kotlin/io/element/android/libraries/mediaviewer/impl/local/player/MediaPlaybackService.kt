@@ -7,9 +7,12 @@
 
 package io.element.android.libraries.mediaviewer.impl.local.player
 
+import android.app.PendingIntent
 import android.content.Intent
+import androidx.core.net.toUri
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
+import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
@@ -40,7 +43,29 @@ class MediaPlaybackService : MediaSessionService() {
                     stopSelf()
                 }
             }
+
+            override fun onMediaMetadataChanged(metadata: MediaMetadata) {
+                updateSessionActivity(metadata)
+            }
         })
+    }
+
+    private fun updateSessionActivity(metadata: MediaMetadata) {
+        val extras = metadata.extras ?: return
+        val sessionId = extras.getString("sessionId") ?: return
+        val roomId = extras.getString("roomId") ?: return
+        val deepLinkUri = "elementx://open/$sessionId/$roomId".toUri()
+        val intent = Intent(Intent.ACTION_VIEW, deepLinkUri).apply {
+            setPackage(packageName)
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+        mediaSession?.setSessionActivity(pendingIntent)
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = mediaSession
