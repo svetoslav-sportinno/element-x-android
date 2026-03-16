@@ -52,7 +52,6 @@ import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import io.element.android.compound.theme.ElementTheme
 import io.element.android.compound.tokens.generated.CompoundIcons
-import io.element.android.libraries.audio.api.AudioFocus
 import io.element.android.libraries.designsystem.components.media.WaveformPlaybackView
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
@@ -80,7 +79,6 @@ fun MediaAudioView(
     bottomPaddingInPixels: Int,
     localMedia: LocalMedia?,
     info: MediaInfo?,
-    audioFocus: AudioFocus?,
     modifier: Modifier = Modifier,
     isDisplayed: Boolean = true,
 ) {
@@ -93,7 +91,6 @@ fun MediaAudioView(
             player = player,
             localMedia = localMedia,
             info = info,
-            audioFocus = audioFocus,
             modifier = modifier,
         )
     }
@@ -108,7 +105,6 @@ private fun ServicePlayerMediaAudioView(
     player: Player,
     localMedia: LocalMedia?,
     info: MediaInfo?,
-    audioFocus: AudioFocus?,
     modifier: Modifier = Modifier,
 ) {
     var mediaPlayerControllerState: MediaPlayerControllerState by remember {
@@ -302,7 +298,10 @@ private fun ServicePlayerMediaAudioView(
             onToggleMute = {
                 // Cannot happen for audio files
             },
-            audioFocus = audioFocus,
+            // Pass null: the service's ExoPlayer handles audio focus via handleAudioFocus=true.
+            // Passing audioFocus here would cause a second AudioManager.requestAudioFocus() call
+            // that conflicts with ExoPlayer's internal focus request, instantly pausing playback.
+            audioFocus = null,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
@@ -374,7 +373,6 @@ internal fun MediaAudioViewPreview(
         bottomPaddingInPixels = 0,
         localMediaViewState = rememberLocalMediaViewState(),
         info = info,
-        audioFocus = null,
         localMedia = null,
     )
 }

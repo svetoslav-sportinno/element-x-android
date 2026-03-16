@@ -37,7 +37,6 @@ import androidx.media3.common.Timeline
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import io.element.android.compound.theme.ElementTheme
-import io.element.android.libraries.audio.api.AudioFocus
 import io.element.android.libraries.designsystem.preview.ElementPreview
 import io.element.android.libraries.designsystem.preview.PreviewsDayNight
 import io.element.android.libraries.designsystem.text.toDp
@@ -65,7 +64,6 @@ fun MediaVideoView(
     bottomPaddingInPixels: Int,
     localMedia: LocalMedia?,
     autoplay: Boolean,
-    audioFocus: AudioFocus?,
     modifier: Modifier = Modifier,
 ) {
     val player = rememberMediaServicePlayer()
@@ -77,7 +75,6 @@ fun MediaVideoView(
             player = player,
             localMedia = localMedia,
             autoplay = autoplay,
-            audioFocus = audioFocus,
             modifier = modifier,
         )
     }
@@ -92,7 +89,6 @@ private fun ServicePlayerMediaVideoView(
     player: Player,
     localMedia: LocalMedia?,
     autoplay: Boolean,
-    audioFocus: AudioFocus?,
     modifier: Modifier = Modifier,
 ) {
     var mediaPlayerControllerState: MediaPlayerControllerState by remember {
@@ -231,7 +227,10 @@ private fun ServicePlayerMediaVideoView(
                 autoHideController++
                 player.volume = if (player.volume == 1f) 0f else 1f
             },
-            audioFocus = audioFocus,
+            // Pass null: the service's ExoPlayer handles audio focus via handleAudioFocus=true.
+            // Passing audioFocus here would cause a second AudioManager.requestAudioFocus() call
+            // that conflicts with ExoPlayer's internal focus request, instantly pausing playback.
+            audioFocus = null,
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
@@ -306,7 +305,6 @@ internal fun MediaVideoViewPreview() = ElementPreview {
         bottomPaddingInPixels = 0,
         localMediaViewState = rememberLocalMediaViewState(),
         localMedia = null,
-        audioFocus = null,
         autoplay = false,
     )
 }
