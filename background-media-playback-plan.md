@@ -162,8 +162,8 @@ We initially removed `audioFocus` to fix detekt unused-parameter warnings, then 
 
 ## TASK 2: MediaStyle Notification (depends on Task 1)
 
-> **Status: READY TO IMPLEMENT**
-> We now know exactly how to do this. See Knowledge Base section above for full details.
+> **Status: DONE**
+> Implemented: notification metadata (title + subtitle), artwork (video thumbnail / room avatar), tap-to-foreground intent, dismiss behavior.
 
 Enrich the auto-generated `MediaSessionService` notification with metadata, a large icon, and a tap-to-navigate intent.
 
@@ -471,7 +471,7 @@ The `MediaPlaybackService` currently has no knowledge of the room timeline or wh
 | Task | Depends on | Risk | Status |
 |---|---|---|---|
 | 1 - Foreground Service + MediaSession | — | Medium | **DONE** (PR #6351) |
-| 2 - MediaStyle Notification | Task 1 | Low | **READY** (full plan in Knowledge Base) |
+| 2 - MediaStyle Notification | Task 1 | Low | **DONE** (metadata, artwork, tap intent, dismiss) |
 | 3 - Video Background Audio | Task 1 | Low | Partially done |
 | 4 - Voice Message Interaction | Task 1 | Low-Medium | Not started |
 | 5 - State Synchronization | Tasks 1, 2 | Medium | Not started |
@@ -496,17 +496,22 @@ This means:
 
 **Voice messages still work** because `DefaultMediaPlayer` requests focus with `AudioFocusRequester.VoiceMessage` → `USAGE_VOICE_COMMUNICATION`, which causes ExoPlayer to lose `USAGE_MEDIA` focus automatically via Android's focus arbitration. No app-internal plumbing needed.
 
-### Data Flow: State → Views → Player
+### Data Flow: State → Views → Player (updated after Task 2)
 
 ```
 MediaViewerNode (has sessionId: SessionId injected, is in RoomScope)
   ↓
-MediaViewerPresenter (has room: JoinedRoom → room.sessionId, room.roomId)
+MediaViewerPresenter (has room: JoinedRoom → room.sessionId, room.roomId, room.info().avatarUrl)
   ↓ produces
-MediaViewerState (contains listData: ImmutableList<MediaViewerPageData>)
+MediaViewerState
+  ├─ listData: ImmutableList<MediaViewerPageData>
+  ├─ sessionId: String          (from room.sessionId.value)
+  ├─ roomId: String             (from room.roomId.value)
+  └─ roomAvatarUrl: String?     (from room.info().avatarUrl)
   ↓
 MediaViewerView
   ↓ HorizontalPager with beyondViewportPageCount=1
+  ↓ CompositionLocalProvider(LocalMediaPlaybackContext provides ...)
 MediaViewerPageData.MediaViewerData
   ├─ eventId: EventId?
   ├─ mediaInfo: MediaInfo (filename, senderName, mimeType, duration, etc.)
@@ -521,8 +526,14 @@ MediaViewerPageData.MediaViewerData
   MediaVideoView / MediaAudioView
       ├─ localMedia: LocalMedia? (has .uri and .info: MediaInfo)
       ├─ info: MediaInfo? (audio only, passed explicitly)
-      └─ player: Player? (from rememberMediaServicePlayer())
+      ├─ player: Player? (from rememberMediaServicePlayer())
+      └─ playbackContext: MediaPlaybackContext (from LocalMediaPlaybackContext.current)
+            ├─ sessionId, roomId, eventId     → Bundle extras on MediaMetadata
+            ├─ thumbnailSource                → artwork for video notification
+            └─ roomAvatarUrl                  → artwork for audio notification
 ```
+
+**MediaPlaybackContext (CompositionLocal)** — carries navigation context and artwork sources from `MediaViewerView` down to `MediaVideoView`/`MediaAudioView` without threading parameters through `LocalMediaView`. Provided per-page in the HorizontalPager. The `sessionId`, `roomId`, `roomAvatarUrl` come from `MediaViewerState` (room-level). The `eventId` and `thumbnailSource` come from `MediaViewerPageData.MediaViewerData` (per-page).
 
 ### MediaInfo Fields (available at MediaItem construction point)
 
@@ -605,42 +616,51 @@ The project has a custom Coil pipeline for loading Matrix media (mxc:// URIs):
 To load artwork programmatically in a `LaunchedEffect`:
 ```kotlin
 val context = LocalContext.current
-val imageLoader = context.imageLoader  // Coil singleton, already configured with Matrix fetchers
+// context.imageLoader is the Coil singleton, already configured with Matrix fetchers
 
 val artworkBytes = artworkSource?.let { source ->
-    runCatching {
+    tryOrNull {  // NOT runCatching — detekt bans it, use tryOrNull from libraries.core.data
         val request = ImageRequest.Builder(context)
             .data(MediaRequestData(source, MediaRequestData.Kind.Thumbnail(256, 256)))
             .build()
-        val result = imageLoader.execute(request)
-        (result.image as? BitmapImage)?.bitmap?.let { bitmap ->
+        val result = context.imageLoader.execute(request)
+        result.image?.toBitmap()?.let { bitmap ->  // coil3.toBitmap() — NOT toBitmapImage()
             ByteArrayOutputStream().use { stream ->
                 bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
                 stream.toByteArray()
             }
         }
-    }.getOrNull()
+    }
 }
 ```
 
-Key: wrap in `runCatching` — if loading fails (network error, no thumbnail), just skip artwork.
+Key: wrap in `tryOrNull` — if loading fails (network error, no thumbnail), just skip artwork. Do NOT use `runCatching` — detekt bans it. Import `io.element.android.libraries.core.data.tryOrNull`.
 
-### Deep Link System for Notification Tap
+### Notification Tap Intent: Bring App to Foreground (NOT Deep Link)
 
-**Format**: `elementx://open/{sessionId}/{roomId}` (same as push notifications)
-**How it works**:
-1. Service builds a `PendingIntent` with `Intent(ACTION_VIEW, deepLinkUri)` + `setPackage(packageName)`
-2. Set via `mediaSession.setSessionActivity(pendingIntent)`
-3. User taps notification → `MainActivity` (singleTask, `onNewIntent`) → `IntentResolver` → `DeeplinkParser` → `RootFlowNode.navigateTo()` → opens the room
+**CORRECTED APPROACH (learned from Task 2 bug fix)**: Do NOT use a deep link like `elementx://open/{sessionId}/{roomId}`. That navigates to the room, which is disruptive — the user expects to return to the media viewer.
 
-**Key files in the navigation chain**:
-- `app/src/main/kotlin/.../MainActivity.kt` — entry point, delegates to `mainNode.handleIntent()`
-- `appnav/src/main/kotlin/.../RootFlowNode.kt` — resolves intent, navigates
-- `appnav/src/main/kotlin/.../intent/IntentResolver.kt` — intent → `ResolvedIntent`
-- `libraries/deeplink/impl/.../DefaultDeeplinkParser.kt` — URI → `DeeplinkData`
-- `libraries/deeplink/impl/.../DefaultDeepLinkCreator.kt` — creates URIs
+**Current implementation**: Use `packageManager.getLaunchIntentForPackage(packageName)` to bring the existing app task to the foreground. Since `MainActivity` is `singleTask`, this just resurfaces whatever screen the user was on. If the media viewer is still on the nav stack (which it usually is during playback), the user sees it.
 
-**DO NOT add `deeplink` module as a dependency** to `mediaviewer/impl`. Just construct the URI string directly: `"elementx://open/$sessionId/$roomId".toUri()`. The format is stable and simple.
+```kotlin
+private fun updateSessionActivity(metadata: MediaMetadata) {
+    if (metadata.extras?.containsKey("sessionId") != true) return
+    val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return
+    val pendingIntent = PendingIntent.getActivity(
+        this, 0, intent,
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+    )
+    mediaSession?.setSessionActivity(pendingIntent)
+}
+```
+
+**Why extras are still passed**: The `sessionId`/`roomId`/`eventId` in `MediaMetadata.extras` are still set by the UI views. They're used by `updateSessionActivity()` as a guard (only set the session activity once metadata with extras arrives), and may be used in the future for direct media viewer deep links.
+
+**Deep link system (reference, not currently used)**:
+- Format: `elementx://open/{sessionId}/{roomId}`
+- Chain: `MainActivity` (singleTask, `onNewIntent`) → `IntentResolver` → `DeeplinkParser` → `RootFlowNode.navigateTo()`
+- Key files: `MainActivity.kt`, `RootFlowNode.kt`, `IntentResolver.kt`, `DefaultDeeplinkParser.kt`
+- **DO NOT add `deeplink` module as a dependency** to `mediaviewer/impl`.
 
 ### Stopping the Service from UI
 
@@ -673,12 +693,44 @@ Located in `MediaViewerView.kt` (private composable). Uses Material3 `TopAppBar`
 
 **Available icons**: `CompoundIcons.Close()` and `CompoundIcons.Stop()` both exist in `libraries/compound/.../CompoundIcons.kt`.
 
+### MediaMetadata Leaks Into In-App Player UI (CRITICAL GOTCHA)
+
+**Problem discovered in Task 2**: Setting `MediaMetadata` (title, artist, artworkData) on the `MediaItem` for the notification ALSO affects the in-app audio player UI. The `onMediaMetadataChanged` listener in `MediaAudioView` updates a `metadata` state variable, which is used by:
+
+1. **`metadata.hasArtwork()`** — controls whether the `PlayerView` is visible (shows album art) and whether the default audio icon is shown. Located in `MediaMetadata.kt` (`libraries/mediaviewer/impl/.../local/audio/MediaMetadata.kt`). Returns `true` if `artworkData != null || artworkUri != null`.
+
+2. **`metadata.buildInfo()`** — builds a "Artist - Title - Year" string shown in `AudioInfoView` below the player. Also in `MediaMetadata.kt`.
+
+**What went wrong**: We set `setTitle(filename)`, `setArtist(senderName)`, and `setArtworkData(roomAvatar)` on the MediaMetadata for the notification. This caused:
+- The audio player to show the room avatar as embedded album art (replacing the default audio icon)
+- An extra "SenderName - Filename" subtitle to appear in the in-app player below the icon
+- Visual flickering as metadata arrives asynchronously after the LaunchedEffect completes
+
+**The fix**: In `onMediaMetadataChanged`, check if the metadata contains our custom extras key (`sessionId`). If yes, it's our notification metadata → skip updating the UI state. Only update `metadata` for genuine file-embedded metadata (ID3 tags, etc.):
+
+```kotlin
+override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
+    // Only update UI metadata from file-embedded metadata (e.g. ID3 tags),
+    // not from our notification metadata which has custom extras.
+    if (mediaMetadata.extras?.containsKey("sessionId") != true) {
+        metadata = mediaMetadata
+    }
+}
+```
+
+**General rule**: Any data set on `MediaMetadata` for the notification will be visible to ALL `Player.Listener.onMediaMetadataChanged()` callbacks — including those in the UI. Always filter by checking for custom extras keys to distinguish notification metadata from file-embedded metadata.
+
+**This does NOT affect `MediaVideoView`** because the video player doesn't have a `metadata` state or `AudioInfoView`. The video `PlayerView` renders video frames directly.
+
 ### Detekt / KtLint Gotchas
 
 1. **Import ordering**: KtLint requires lexicographic order, no empty lines between imports. Use `./gradlew ktlintFormat` to auto-fix.
 2. **UnusedParameter**: Detekt flags unused function parameters. If you add a parameter to a public composable, make sure it's actually used or the entire chain will need updating.
 3. **UnnecessaryParentheses**: Detekt doesn't like `(a && b)` inside `if (x || (a && b))`. Remove the inner parens even though they aid readability.
 4. **Block comments before code on same line**: KtLint rejects `/* comment */ value` — use `// comment\nvalue` instead.
+5. **`runCatching` is BANNED** (`RunCatchingNotAllowed` rule). Use `tryOrNull` from `io.element.android.libraries.core.data.tryOrNull` (returns nullable, rethrows `CancellationException`). Or use `runCatchingExceptions` from `io.element.android.libraries.core.extensions.runCatchingExceptions`. Never use `runCatching` or `mapCatching`.
+6. **Coil 3 API**: Use `coil3.toBitmap()` to convert `Image` to `Bitmap`. NOT `toBitmapImage()` — that doesn't exist. Import: `import coil3.toBitmap`.
+7. **Max line length = 160**: When adding indentation (e.g., wrapping in `CompositionLocalProvider`), existing comments may exceed the limit. Break them into multiple lines.
 
 ### Testing Constraints
 
@@ -703,10 +755,12 @@ The module does NOT depend on: `deeplink`, `push`, `mediaplayer` (voice messages
 
 | File | Path | Purpose |
 |------|------|---------|
-| MediaPlaybackService | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackService.kt` | Service owning ExoPlayer + MediaSession |
+| MediaPlaybackService | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackService.kt` | Service owning ExoPlayer + MediaSession. Handles tap intent via `updateSessionActivity()`. |
 | MediaPlaybackServiceConnection | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackServiceConnection.kt` | `rememberMediaServicePlayer()` composable |
+| MediaPlaybackContext | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackContext.kt` | `data class` + `LocalMediaPlaybackContext` CompositionLocal for navigation context + artwork |
 | ExoPlayerExtensions | `libraries/mediaviewer/impl/.../local/player/ExoPlayerExtensions.kt` | `Player.togglePlay()`, `Player.seekToEnsurePlaying()` |
 | MediaPlayerControllerView | `libraries/mediaviewer/impl/.../local/player/MediaPlayerControllerView.kt` | Play/pause/seek/mute UI controls |
+| MediaMetadata extensions | `libraries/mediaviewer/impl/.../local/audio/MediaMetadata.kt` | `hasArtwork()` and `buildInfo()` — check artworkData/artworkUri and build "Artist - Title" string |
 | MediaVideoView | `libraries/mediaviewer/impl/.../local/video/MediaVideoView.kt` | Video player composable |
 | MediaAudioView | `libraries/mediaviewer/impl/.../local/audio/MediaAudioView.kt` | Audio player composable |
 | LocalMediaView | `libraries/mediaviewer/impl/.../local/LocalMediaView.kt` | Router — dispatches to video/audio/image/pdf |
