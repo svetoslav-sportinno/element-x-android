@@ -133,7 +133,7 @@ class MessagesFlowNode(
 ), MessagesEntryPoint.NodeProxy {
     sealed interface NavTarget : Parcelable {
         @Parcelize
-        data class Messages(val focusedEventId: EventId?) : NavTarget
+        data class Messages(val focusedEventId: EventId?, val openMediaForEventId: EventId? = null) : NavTarget
 
         @Parcelize
         data class MediaViewer(
@@ -294,7 +294,7 @@ class MessagesFlowNode(
                         backstack.push(NavTarget.Thread(threadRootId, focusedEventId))
                     }
                 }
-                val inputs = MessagesNode.Inputs(focusedEventId = navTarget.focusedEventId)
+                val inputs = MessagesNode.Inputs(focusedEventId = navTarget.focusedEventId, openMediaForEventId = navTarget.openMediaForEventId)
                 createNode<MessagesNode>(buildContext, listOf(callback, inputs))
             }
             is NavTarget.MediaViewer -> {
