@@ -441,14 +441,14 @@ The `MediaPlaybackService` currently has no knowledge of the room timeline or wh
 
 ## TASK 7: In-App Player Stop Button + Navigation (depends on Task 1)
 
-> **Status: READY TO IMPLEMENT**
-> See Knowledge Base for full implementation details.
+> **Status: PARTIALLY DONE**
+> Sub-feature 3 (notification tap → media viewer) is DONE. Stop button and service cleanup remain.
 
 ### Sub-features
 
 1. **Stop button in top bar**: In `navigationIcon` slot via `Row { BackButton; StopButton }`. Use `context.stopService()` NOT `player.stop()`. See Knowledge Base "Stopping the Service from UI".
 2. **Service stops on cleared items**: Add `STATE_IDLE + mediaItemCount == 0` check to `onPlaybackStateChanged`.
-3. **Navigation from re-created media viewer**: When pressing back from a media viewer opened via notification, scroll room timeline to the currently playing file's message.
+3. **~~Navigation from re-created media viewer~~**: **DONE** — Tapping the notification now deep links with `?media=true`, which navigates to the room timeline focused on the event and auto-opens the media viewer. Back button returns to the timeline scrolled to that event. See Knowledge Base "Notification Tap Intent: Deep Link to Media Viewer".
 
 ### Files to modify
 
@@ -476,7 +476,7 @@ The `MediaPlaybackService` currently has no knowledge of the room timeline or wh
 | 4 - Voice Message Interaction | Task 1 | Low-Medium | Not started |
 | 5 - State Synchronization | Tasks 1, 2 | Medium | Not started |
 | 6 - Skip Next/Previous | Tasks 1, 2 | **High** | Not started |
-| 7 - Stop Button + Navigation | Task 1 | Low | **READY** (full plan in Knowledge Base) |
+| 7 - Stop Button + Navigation | Task 1 | Low | **PARTIALLY DONE** (notification tap → media viewer done; stop button remains) |
 
 ---
 
@@ -636,31 +636,99 @@ val artworkBytes = artworkSource?.let { source ->
 
 Key: wrap in `tryOrNull` — if loading fails (network error, no thumbnail), just skip artwork. Do NOT use `runCatching` — detekt bans it. Import `io.element.android.libraries.core.data.tryOrNull`.
 
-### Notification Tap Intent: Bring App to Foreground (NOT Deep Link)
+### Notification Tap Intent: Deep Link to Media Viewer
 
-**CORRECTED APPROACH (learned from Task 2 bug fix)**: Do NOT use a deep link like `elementx://open/{sessionId}/{roomId}`. That navigates to the room, which is disruptive — the user expects to return to the media viewer.
+**Current implementation**: The notification builds a deep link with `?media=true` that navigates directly to the room timeline AND auto-opens the media viewer for the playing event. Back button returns to the timeline scrolled to that event.
 
-**Current implementation**: Use `packageManager.getLaunchIntentForPackage(packageName)` to bring the existing app task to the foreground. Since `MainActivity` is `singleTask`, this just resurfaces whatever screen the user was on. If the media viewer is still on the nav stack (which it usually is during playback), the user sees it.
+**Deep link format**: `elementx://open/{sessionId}/{roomId}//{eventId}?media=true`
+- The `//` is an empty threadId (already handled by parser)
+- The `?media=true` query param signals "auto-open media viewer after navigating to room"
+
+**Full navigation chain** (10 steps):
+
+```
+1. User taps notification
+2. MediaPlaybackService builds PendingIntent with deep link URI from MediaMetadata.extras
+3. MainActivity (singleTask) receives intent via onNewIntent
+4. IntentResolver → DefaultDeeplinkParser parses URI
+5. DeeplinkData.Room(sessionId, roomId, eventId, openMedia=true)
+6. RootFlowNode.navigateTo() → uses RoomNavigationTarget.MediaViewer(eventId) instead of Root
+7. JoinedRoomLoadedFlowNode → NavTarget.Messages(focusedEventId=eventId, openMediaForEventId=eventId)
+8. MessagesFlowNode → MessagesNode.Inputs(focusedEventId, openMediaForEventId)
+9. MessagesNode: focusedEventId triggers FocusOnEvent → timeline scrolls to event
+10. MessagesNode: LaunchedEffect watches timelineItems, finds event → callback.handleEventClick → overlay.show(MediaViewer)
+```
+
+**Files modified (9 files across 4 layers)**:
+
+| Layer | File | Change |
+|-------|------|--------|
+| Deep Link | `DeeplinkData.kt` | Added `openMedia: Boolean = false` to `Room` |
+| Deep Link | `DefaultDeeplinkParser.kt` | Parse `?media=true` via `getBooleanQueryParameter` |
+| Deep Link | `MediaPlaybackService.kt` | Build `elementx://open/...?media=true` URI from extras |
+| Navigation | `RoomNavigationTarget.kt` | Added `MediaViewer(eventId)` variant |
+| Navigation | `RootFlowNode.kt` | Route `openMedia` deep links to `MediaViewer` target |
+| Navigation | `JoinedRoomLoadedFlowNode.kt` | Handle `MediaViewer` → `Messages(focusedEventId, openMediaForEventId)` |
+| Messages | `MessagesEntryPoint.kt` | Added `openMediaForEventId` to `InitialTarget.Messages` |
+| Messages | `DefaultMessagesEntryPoint.kt` + `MessagesFlowNode.kt` | Thread `openMediaForEventId` through |
+| Messages | `MessagesNode.kt` | `LaunchedEffect` auto-opens media viewer when event appears in timeline |
+
+**Auto-open mechanism in MessagesNode** (the key piece):
 
 ```kotlin
-private fun updateSessionActivity(metadata: MediaMetadata) {
-    if (metadata.extras?.containsKey("sessionId") != true) return
-    val intent = packageManager.getLaunchIntentForPackage(packageName) ?: return
-    val pendingIntent = PendingIntent.getActivity(
-        this, 0, intent,
-        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-    )
-    mediaSession?.setSessionActivity(pendingIntent)
+var openMediaForEventId by rememberSaveable { mutableStateOf(inputs.openMediaForEventId) }
+LaunchedEffect(openMediaForEventId, state.timelineState.timelineItems) {
+    val eventId = openMediaForEventId ?: return@LaunchedEffect
+    val event = state.timelineState.timelineItems
+        .filterIsInstance<TimelineItem.Event>()
+        .firstOrNull { it.eventId == eventId }
+    if (event != null) {
+        val timelineMode = if (state.timelineState.isLive) {
+            timelineController.mainTimelineMode()
+        } else {
+            timelineController.detachedTimelineMode() ?: return@LaunchedEffect
+        }
+        callback.handleEventClick(timelineMode, event)
+        openMediaForEventId = null  // one-shot
+    }
 }
 ```
 
-**Why extras are still passed**: The `sessionId`/`roomId`/`eventId` in `MediaMetadata.extras` are still set by the UI views. They're used by `updateSessionActivity()` as a guard (only set the session activity once metadata with extras arrives), and may be used in the future for direct media viewer deep links.
+This watches `timelineItems` because the event may not be loaded yet when the composable first renders (timeline needs to scroll to it first via `FocusOnEvent`). Once the event appears, it triggers `handleEventClick` which calls `MessagesFlowNode.processEventClick()` → `overlay.show(MediaViewer)`. The `rememberSaveable` + null-after-use pattern ensures it's one-shot and survives configuration changes.
 
-**Deep link system (reference, not currently used)**:
-- Format: `elementx://open/{sessionId}/{roomId}`
-- Chain: `MainActivity` (singleTask, `onNewIntent`) → `IntentResolver` → `DeeplinkParser` → `RootFlowNode.navigateTo()`
-- Key files: `MainActivity.kt`, `RootFlowNode.kt`, `IntentResolver.kt`, `DefaultDeeplinkParser.kt`
-- **DO NOT add `deeplink` module as a dependency** to `mediaviewer/impl`.
+**Why deep link instead of `getLaunchIntentForPackage`**: The previous approach just brought the app to foreground, which only worked if the media viewer was still on the nav stack. If the user navigated away (e.g., went to another room), tapping the notification did nothing useful. The deep link approach always navigates to the correct room and opens the media viewer, regardless of current app state.
+
+**DO NOT add `deeplink` module as a dependency** to `mediaviewer/impl` — the service constructs the URI string directly.
+
+### Deep Link System Architecture
+
+**Format**: `elementx://open/{sessionId}/{roomId}/{threadId}/{eventId}?media=true`
+- Scheme: `elementx`, Host: `open` (defined in `Constants.kt`)
+- Path segments are URL-encoded, parsed by `DefaultDeeplinkParser`
+- Query params: `media=true` (new, for auto-opening media viewer)
+- Trailing empty segments are stripped by `DefaultDeepLinkCreator`
+
+**Key files**:
+| File | Path | Purpose |
+|------|------|---------|
+| `DeeplinkData.kt` | `libraries/deeplink/api/` | Sealed interface: `Root(sessionId)`, `Room(sessionId, roomId, threadId?, eventId?, openMedia)` |
+| `DeeplinkParser.kt` | `libraries/deeplink/api/` | Interface: `getFromIntent(Intent): DeeplinkData?` |
+| `DefaultDeeplinkParser.kt` | `libraries/deeplink/impl/` | Parses `elementx://open/...` URIs from `ACTION_VIEW` intents |
+| `DefaultDeepLinkCreator.kt` | `libraries/deeplink/impl/` | Builds `elementx://open/...` URI strings (used by push notifications) |
+| `Constants.kt` | `libraries/deeplink/impl/` | `SCHEME = "elementx"`, `HOST = "open"` |
+| `IntentResolver.kt` | `appnav/` | Routes intents to `ResolvedIntent.Navigation(deeplinkData)` |
+| `RootFlowNode.kt` | `appnav/` | `navigateTo(deeplinkData)` → attaches session → attaches room |
+
+**Navigation target hierarchy**:
+```
+RoomNavigationTarget (sealed interface, Parcelable)
+├── Root(eventId?)                    → Messages timeline, optionally focused on event
+├── MediaViewer(eventId)              → Messages timeline + auto-open media viewer (NEW)
+├── Details                           → Room details screen
+└── NotificationSettings              → Room notification settings
+```
+
+`RoomNavigationTarget` flows through: `RootFlowNode` → `LoggedInFlowNode.attachRoom()` → `RoomFlowNode` → `JoinedRoomLoadedFlowNode.Inputs.initialElement` → `initialElement()` function → `NavTarget.Messages`.
 
 ### Stopping the Service from UI
 
