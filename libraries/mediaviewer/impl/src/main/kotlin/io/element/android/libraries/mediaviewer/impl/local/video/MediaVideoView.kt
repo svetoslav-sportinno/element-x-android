@@ -206,8 +206,13 @@ private fun ServicePlayerMediaVideoView(
                 .setUri(localMedia.uri)
                 .setMediaMetadata(metadata)
                 .build()
-            player.setMediaItem(mediaItem)
-            player.prepare()
+            val currentEventId = player.currentMediaItem?.mediaMetadata?.extras?.getString("eventId")
+            if (currentEventId == playbackContext.eventId && player.playbackState != Player.STATE_IDLE) {
+                // Same item already loaded/playing — don't reset
+            } else {
+                player.setMediaItem(mediaItem)
+                player.prepare()
+            }
         }
     } else if (!isDisplayed) {
         // Don't clear media items when not displayed - just don't set new ones
