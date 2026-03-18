@@ -230,12 +230,13 @@ private fun ServicePlayerMediaAudioView(
                 .apply { artworkBytes?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
                 .setExtras(extras)
                 .build()
+            val mediaId = playbackContext.eventId
             val mediaItem = MediaItem.Builder()
+                .setMediaId(mediaId)
                 .setUri(localMedia.uri)
                 .setMediaMetadata(mediaMetadata)
                 .build()
-            val currentEventId = player.currentMediaItem?.mediaMetadata?.extras?.getString("eventId")
-            if (currentEventId == playbackContext.eventId && player.playbackState != Player.STATE_IDLE) {
+            if (player.currentMediaItem?.mediaId == mediaId && player.playbackState != Player.STATE_IDLE) {
                 // Same item already loaded/playing — don't reset
             } else {
                 player.setMediaItem(mediaItem)
