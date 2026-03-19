@@ -232,6 +232,11 @@ private fun ServicePlayerMediaAudioView(
                 .build()
             if (player.currentMediaItem?.mediaId == mediaId) {
                 // Same item already loaded — don't reset
+                // Sync UI state with actual player state
+                mediaPlayerControllerState = mediaPlayerControllerState.copy(
+                    isPlaying = player.isPlaying,
+                    isReady = player.playbackState == Player.STATE_READY,
+                )
             } else {
                 player.setMediaItem(mediaItem)
                 player.prepare()
