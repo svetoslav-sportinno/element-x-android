@@ -236,8 +236,8 @@ private fun ServicePlayerMediaAudioView(
                 .setUri(localMedia.uri)
                 .setMediaMetadata(mediaMetadata)
                 .build()
-            if (player.currentMediaItem?.mediaId == mediaId && player.playbackState != Player.STATE_IDLE) {
-                // Same item already loaded/playing — don't reset
+            if (player.currentMediaItem?.mediaId == mediaId) {
+                // Same item already loaded — don't reset
             } else {
                 player.setMediaItem(mediaItem)
                 player.prepare()
