@@ -193,12 +193,6 @@ private fun ServicePlayerMediaAudioView(
             )
         }
     }
-    LaunchedEffect(isDisplayed) {
-        // If not displayed, make sure to pause the audio
-        if (!isDisplayed) {
-            player.pause()
-        }
-    }
     val playbackContext = LocalMediaPlaybackContext.current
     val context = LocalContext.current
     if (localMedia?.uri != null && isDisplayed) {

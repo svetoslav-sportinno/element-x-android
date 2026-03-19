@@ -334,10 +334,8 @@ private fun PlayerLifecycleHelper(
             // When displayed, start autoplaying
             player.play()
             needsAutoPlay = false
-        } else if (!isDisplayed && mediaPlayerControllerState.isPlaying) {
-            // If not displayed, make sure to pause the video
-            player.pause()
         }
+        // Note: We don't pause when isDisplayed=false because background playback is supported
     }
 }
 
