@@ -19,14 +19,32 @@ import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
+import dev.zacsweers.metro.Inject
+import io.element.android.libraries.architecture.bindings
+import io.element.android.libraries.matrix.api.MatrixClientProvider
+import io.element.android.libraries.mediaviewer.api.local.LocalMediaFactory
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 
 @OptIn(UnstableApi::class)
 class MediaPlaybackService : MediaSessionService() {
-    @OptIn(UnstableApi::class)
+    @Inject lateinit var matrixClientProvider: MatrixClientProvider
+    @Inject lateinit var localMediaFactory: LocalMediaFactory
+
     private var mediaSession: MediaSession? = null
+    private var forwardingPlayer: SkipEnabledForwardingPlayer? = null
+    private var playlistManager: MediaPlaylistManager? = null
+    private var serviceScope: CoroutineScope? = null
 
     override fun onCreate() {
         super.onCreate()
+        bindings<MediaPlaybackServiceBindings>().inject(this)
+
+        val scope = CoroutineScope(SupervisorJob())
+        serviceScope = scope
+
         val player = ExoPlayer.Builder(this)
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -39,19 +57,81 @@ class MediaPlaybackService : MediaSessionService() {
             .setHandleAudioBecomingNoisy(true)
             .build()
 
-        mediaSession = MediaSession.Builder(this, player).build()
+        val skipPlayer = SkipEnabledForwardingPlayer(
+            player = player,
+            onSkipToNext = { scope.launch { handleSkipToNext() } },
+            onSkipToPrevious = { scope.launch { handleSkipToPrevious() } },
+        )
+        forwardingPlayer = skipPlayer
+
+        val manager = MediaPlaylistManager(
+            matrixClientProvider = matrixClientProvider,
+            localMediaFactory = localMediaFactory,
+            coroutineScope = scope,
+        )
+        playlistManager = manager
+
+        mediaSession = MediaSession.Builder(this, skipPlayer).build()
 
         player.addListener(object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) {
-                    stopSelf()
+                    scope.launch { handlePlaybackEnded() }
                 }
             }
 
             override fun onMediaMetadataChanged(metadata: MediaMetadata) {
                 updateSessionActivity(metadata)
+                initializePlaylistFromMetadata(metadata)
             }
         })
+    }
+
+    private fun initializePlaylistFromMetadata(metadata: MediaMetadata) {
+        val extras = metadata.extras ?: return
+        val sessionId = extras.getString("sessionId") ?: return
+        val roomId = extras.getString("roomId") ?: return
+        val eventId = extras.getString("eventId") ?: return
+
+        playlistManager?.initialize(sessionId, roomId, eventId)
+        updateSkipButtonState()
+    }
+
+    private fun updateSkipButtonState() {
+        val manager = playlistManager ?: return
+        forwardingPlayer?.canSkipNext = manager.hasNext
+        forwardingPlayer?.canSkipPrev = manager.hasPrevious
+    }
+
+    private suspend fun handleSkipToNext() {
+        val result = playlistManager?.skipToNext()
+        if (result != null) {
+            applySkipResult(result)
+        }
+    }
+
+    private suspend fun handleSkipToPrevious() {
+        val result = playlistManager?.skipToPrevious()
+        if (result != null) {
+            applySkipResult(result)
+        }
+    }
+
+    private fun applySkipResult(result: MediaPlaylistManager.SkipResult) {
+        val player = mediaSession?.player ?: return
+        player.setMediaItem(result.mediaItem)
+        player.prepare()
+        player.play()
+        updateSkipButtonState()
+    }
+
+    private suspend fun handlePlaybackEnded() {
+        val result = playlistManager?.skipToNext()
+        if (result != null) {
+            applySkipResult(result)
+        } else {
+            stopSelf()
+        }
     }
 
     @OptIn(UnstableApi::class)
@@ -86,11 +166,16 @@ class MediaPlaybackService : MediaSessionService() {
     }
 
     override fun onDestroy() {
+        playlistManager?.release()
+        playlistManager = null
         mediaSession?.run {
             player.release()
             release()
         }
         mediaSession = null
+        forwardingPlayer = null
+        serviceScope?.cancel()
+        serviceScope = null
         super.onDestroy()
     }
 }
