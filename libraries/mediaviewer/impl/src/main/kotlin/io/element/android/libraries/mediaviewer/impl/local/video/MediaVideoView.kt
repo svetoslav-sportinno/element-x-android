@@ -218,7 +218,7 @@ private fun ServicePlayerMediaVideoView(
     } else if (!isDisplayed) {
         // Don't clear media items when not displayed - just don't set new ones
     } else {
-        player.setMediaItems(emptyList())
+        // Don't clear media items when localMedia is null - they may still be playing in background
     }
     KeepScreenOn(mediaPlayerControllerState.isPlaying)
     Box(

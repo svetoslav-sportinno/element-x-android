@@ -246,7 +246,7 @@ private fun ServicePlayerMediaAudioView(
     } else if (!isDisplayed) {
         // Don't clear media items when not displayed
     } else {
-        player.setMediaItems(emptyList())
+        // Don't clear media items when localMedia is null - they may still be playing in background
     }
     val waveform = info?.waveform
     Box(
