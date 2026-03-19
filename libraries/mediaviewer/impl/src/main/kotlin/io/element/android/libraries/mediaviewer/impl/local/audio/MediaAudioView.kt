@@ -121,15 +121,17 @@ private fun ServicePlayerMediaAudioView(
         mutableStateOf(
             MediaPlayerControllerState(
                 isVisible = true,
-                isPlaying = false,
-                isReady = false,
-                progressInMillis = 0,
-                durationInMillis = 0,
+                isPlaying = player.isPlaying,
+                isReady = player.playbackState == Player.STATE_READY,
+                progressInMillis = player.currentPosition,
+                durationInMillis = player.duration.takeIf { it >= 0 } ?: 0L,
                 canMute = false,
-                isMuted = false,
+                isMuted = player.volume == 0f,
             )
         )
     }
+    // Track when playback is requested for a specific media ID
+    var pendingPlaybackMediaId by remember { mutableStateOf<String?>(null) }
 
     var metadata: MediaMetadata? by remember {
         mutableStateOf(null)
@@ -152,9 +154,19 @@ private fun ServicePlayerMediaAudioView(
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
+                val currentMediaId = player.currentMediaItem?.mediaId
+                // Show Playing if: actually playing, OR we're transitioning to expected new media
+                val isExpectedMedia = currentMediaId == pendingPlaybackMediaId
+
+                val shouldShowPlaying = isPlaying || isExpectedMedia
+
                 mediaPlayerControllerState = mediaPlayerControllerState.copy(
-                    isPlaying = isPlaying,
+                    isPlaying = shouldShowPlaying,
                 )
+
+                if (isPlaying && isExpectedMedia) {
+                    pendingPlaybackMediaId = null
+                }
             }
 
             override fun onTimelineChanged(timeline: Timeline, reason: Int) {
@@ -238,8 +250,15 @@ private fun ServicePlayerMediaAudioView(
                     isReady = player.playbackState == Player.STATE_READY,
                 )
             } else {
+                // Set pending playback BEFORE changing media to prevent flicker
+                pendingPlaybackMediaId = mediaId
                 player.setMediaItem(mediaItem)
                 player.prepare()
+                // Reset progress when opening a new file
+                mediaPlayerControllerState = mediaPlayerControllerState.copy(
+                    progressInMillis = 0L,
+                    durationInMillis = 0L,
+                )
             }
         }
     } else if (!isDisplayed) {

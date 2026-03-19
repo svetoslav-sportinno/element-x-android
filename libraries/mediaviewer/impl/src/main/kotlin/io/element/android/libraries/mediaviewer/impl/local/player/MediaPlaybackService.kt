@@ -10,15 +10,19 @@ package io.element.android.libraries.mediaviewer.impl.local.player
 import android.app.PendingIntent
 import android.content.Intent
 import android.net.Uri
+import androidx.annotation.OptIn
 import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 
+@OptIn(UnstableApi::class)
 class MediaPlaybackService : MediaSessionService() {
+    @OptIn(UnstableApi::class)
     private var mediaSession: MediaSession? = null
 
     override fun onCreate() {
@@ -50,6 +54,7 @@ class MediaPlaybackService : MediaSessionService() {
         })
     }
 
+    @OptIn(UnstableApi::class)
     private fun updateSessionActivity(metadata: MediaMetadata) {
         val extras = metadata.extras ?: return
         val sessionId = extras.getString("sessionId") ?: return
