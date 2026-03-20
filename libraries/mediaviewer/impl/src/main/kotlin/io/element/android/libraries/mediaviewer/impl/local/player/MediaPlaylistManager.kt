@@ -41,6 +41,7 @@ class MediaPlaylistManager(
     private val matrixClientProvider: MatrixClientProvider,
     private val localMediaFactory: LocalMediaFactory,
     private val coroutineScope: CoroutineScope,
+    private val onPlayableItemsChanged: () -> Unit = {},
 ) {
     data class PlayableItem(
         val eventId: EventId,
@@ -109,6 +110,7 @@ class MediaPlaylistManager(
                         .filterIsInstance<MatrixTimelineItem.Event>()
                         .mapNotNull { toPlayableItem(it) }
                         .reversed() // SDK returns newest-first, reverse to chronological
+                    onPlayableItemsChanged()
                 }
             } catch (e: Exception) {
                 Timber.e(e, "Failed to initialize media playlist")

@@ -24,6 +24,7 @@ import io.element.android.libraries.architecture.bindings
 import io.element.android.libraries.matrix.api.MatrixClientProvider
 import io.element.android.libraries.mediaviewer.api.local.LocalMediaFactory
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
@@ -34,6 +35,7 @@ class MediaPlaybackService : MediaSessionService() {
     @Inject lateinit var localMediaFactory: LocalMediaFactory
 
     private var mediaSession: MediaSession? = null
+    private var exoPlayer: ExoPlayer? = null
     private var forwardingPlayer: SkipEnabledForwardingPlayer? = null
     private var playlistManager: MediaPlaylistManager? = null
     private var serviceScope: CoroutineScope? = null
@@ -42,7 +44,7 @@ class MediaPlaybackService : MediaSessionService() {
         super.onCreate()
         bindings<MediaPlaybackServiceBindings>().inject(this)
 
-        val scope = CoroutineScope(SupervisorJob())
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
         serviceScope = scope
 
         val player = ExoPlayer.Builder(this)
@@ -56,6 +58,7 @@ class MediaPlaybackService : MediaSessionService() {
             )
             .setHandleAudioBecomingNoisy(true)
             .build()
+        exoPlayer = player
 
         val skipPlayer = SkipEnabledForwardingPlayer(
             player = player,
@@ -68,6 +71,7 @@ class MediaPlaybackService : MediaSessionService() {
             matrixClientProvider = matrixClientProvider,
             localMediaFactory = localMediaFactory,
             coroutineScope = scope,
+            onPlayableItemsChanged = { updateSkipButtonState() },
         )
         playlistManager = manager
 
@@ -118,7 +122,7 @@ class MediaPlaybackService : MediaSessionService() {
     }
 
     private fun applySkipResult(result: MediaPlaylistManager.SkipResult) {
-        val player = mediaSession?.player ?: return
+        val player = exoPlayer ?: return
         player.setMediaItem(result.mediaItem)
         player.prepare()
         player.play()
@@ -173,6 +177,7 @@ class MediaPlaybackService : MediaSessionService() {
             release()
         }
         mediaSession = null
+        exoPlayer = null
         forwardingPlayer = null
         serviceScope?.cancel()
         serviceScope = null

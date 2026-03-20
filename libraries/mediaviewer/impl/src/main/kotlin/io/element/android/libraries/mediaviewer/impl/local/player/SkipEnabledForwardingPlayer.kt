@@ -10,6 +10,16 @@ package io.element.android.libraries.mediaviewer.impl.local.player
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
 
+/**
+ * A [ForwardingPlayer] that adds skip next/previous media item support.
+ *
+ * When [canSkipNext]/[canSkipPrev] are true, the corresponding skip commands
+ * are added to available commands (making Media3 show buttons on the notification)
+ * and seek calls are delegated to the skip callbacks.
+ *
+ * When skip is not available, default player behavior is preserved (e.g.,
+ * seekToPrevious seeks to the beginning of the current track).
+ */
 class SkipEnabledForwardingPlayer(
     player: Player,
     private val onSkipToNext: () -> Unit,
@@ -19,7 +29,7 @@ class SkipEnabledForwardingPlayer(
         set(value) {
             if (field != value) {
                 field = value
-                listeners.forEach { it.onAvailableCommandsChanged(availableCommands) }
+                notifyAvailableCommandsChanged()
             }
         }
 
@@ -27,46 +37,46 @@ class SkipEnabledForwardingPlayer(
         set(value) {
             if (field != value) {
                 field = value
-                listeners.forEach { it.onAvailableCommandsChanged(availableCommands) }
+                notifyAvailableCommandsChanged()
             }
         }
 
-    private val listeners = mutableListOf<Player.Listener>()
+    private fun notifyAvailableCommandsChanged() {
+        val commands = availableCommands
+        for (listener in registeredListeners) {
+            listener.onAvailableCommandsChanged(commands)
+        }
+    }
+
+    private val registeredListeners = mutableListOf<Player.Listener>()
 
     override fun addListener(listener: Player.Listener) {
-        listeners.add(listener)
+        registeredListeners.add(listener)
         super.addListener(listener)
     }
 
     override fun removeListener(listener: Player.Listener) {
-        listeners.remove(listener)
+        registeredListeners.remove(listener)
         super.removeListener(listener)
     }
 
     override fun getAvailableCommands(): Player.Commands {
-        val commands = super.getAvailableCommands()
-        val builder = commands.buildUpon()
+        val builder = super.getAvailableCommands().buildUpon()
         if (canSkipNext) {
             builder.add(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
             builder.add(Player.COMMAND_SEEK_TO_NEXT)
-        } else {
-            builder.remove(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)
-            builder.remove(Player.COMMAND_SEEK_TO_NEXT)
         }
         if (canSkipPrev) {
             builder.add(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
             builder.add(Player.COMMAND_SEEK_TO_PREVIOUS)
-        } else {
-            builder.remove(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM)
-            builder.remove(Player.COMMAND_SEEK_TO_PREVIOUS)
         }
         return builder.build()
     }
 
     override fun isCommandAvailable(command: Int): Boolean {
         return when (command) {
-            Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM, Player.COMMAND_SEEK_TO_NEXT -> canSkipNext
-            Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM, Player.COMMAND_SEEK_TO_PREVIOUS -> canSkipPrev
+            Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM -> canSkipNext
+            Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM -> canSkipPrev
             else -> super.isCommandAvailable(command)
         }
     }
@@ -76,18 +86,34 @@ class SkipEnabledForwardingPlayer(
     override fun hasPreviousMediaItem(): Boolean = canSkipPrev
 
     override fun seekToNext() {
-        onSkipToNext()
+        if (canSkipNext) {
+            onSkipToNext()
+        } else {
+            super.seekToNext()
+        }
     }
 
     override fun seekToNextMediaItem() {
-        onSkipToNext()
+        if (canSkipNext) {
+            onSkipToNext()
+        } else {
+            super.seekToNextMediaItem()
+        }
     }
 
     override fun seekToPrevious() {
-        onSkipToPrevious()
+        if (canSkipPrev) {
+            onSkipToPrevious()
+        } else {
+            super.seekToPrevious()
+        }
     }
 
     override fun seekToPreviousMediaItem() {
-        onSkipToPrevious()
+        if (canSkipPrev) {
+            onSkipToPrevious()
+        } else {
+            super.seekToPreviousMediaItem()
+        }
     }
 }
