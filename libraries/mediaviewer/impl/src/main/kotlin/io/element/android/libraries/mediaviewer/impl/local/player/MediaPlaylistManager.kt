@@ -36,6 +36,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 
 private const val PAGINATION_TIMEOUT_MS = 10_000L
+private const val ARTWORK_THUMBNAIL_SIZE = 256L
 
 class MediaPlaylistManager(
     private val matrixClientProvider: MatrixClientProvider,
@@ -66,6 +67,7 @@ class MediaPlaylistManager(
     private var room: JoinedRoom? = null
     private var timeline: Timeline? = null
     private var mediaLoader: MatrixMediaLoader? = null
+    private var roomAvatarUrl: String? = null
     private var playableItems: List<PlayableItem> = emptyList()
     private var collectionJob: Job? = null
 
@@ -99,6 +101,7 @@ class MediaPlaylistManager(
                 mediaLoader = client.matrixMediaLoader
                 val joinedRoom = client.getJoinedRoom(RoomId(roomId)) ?: return@launch
                 room = joinedRoom
+                roomAvatarUrl = joinedRoom.info().avatarUrl
 
                 val mediaTimeline = joinedRoom.createTimeline(
                     CreateTimelineParams.MediaOnlyFocused(EventId(eventId))
@@ -109,7 +112,6 @@ class MediaPlaylistManager(
                     playableItems = items
                         .filterIsInstance<MatrixTimelineItem.Event>()
                         .mapNotNull { toPlayableItem(it) }
-                        .reversed() // SDK returns newest-first, reverse to chronological
                     onPlayableItemsChanged()
                 }
             } catch (e: Exception) {
@@ -191,7 +193,6 @@ class MediaPlaylistManager(
                 val newPlayable = items
                     .filterIsInstance<MatrixTimelineItem.Event>()
                     .mapNotNull { toPlayableItem(it) }
-                    .reversed()
                 if (forward) {
                     newPlayable.size > playableItems.size &&
                         newPlayable.getOrNull(currentIndex + 1) != null
@@ -237,6 +238,13 @@ class MediaPlaylistManager(
             )
             val localMedia = localMediaFactory.createFromMediaFile(mediaFile, mediaInfo)
 
+            // Download artwork for the notification
+            val artworkSource = item.thumbnailSource
+                ?: roomAvatarUrl?.let { MediaSource(it) }
+            val artworkBytes = artworkSource?.let { source ->
+                loader.loadMediaThumbnail(source, ARTWORK_THUMBNAIL_SIZE, ARTWORK_THUMBNAIL_SIZE).getOrNull()
+            }
+
             val extras = Bundle().apply {
                 putString("sessionId", currentSessionId)
                 putString("roomId", currentRoomId)
@@ -245,9 +253,15 @@ class MediaPlaylistManager(
             val metadata = MediaMetadata.Builder()
                 .setTitle(item.filename)
                 .setArtist(item.senderName)
+                .apply {
+                    if (artworkBytes != null) {
+                        setArtworkData(artworkBytes, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                    }
+                }
                 .setExtras(extras)
                 .build()
             val mediaItem = MediaItem.Builder()
+                .setMediaId(item.eventId.value)
                 .setUri(localMedia.uri)
                 .setMediaMetadata(metadata)
                 .build()
@@ -267,6 +281,7 @@ class MediaPlaylistManager(
         timeline = null
         room = null
         mediaLoader = null
+        roomAvatarUrl = null
         playableItems = emptyList()
         currentSessionId = null
         currentRoomId = null

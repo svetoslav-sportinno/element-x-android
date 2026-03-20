@@ -127,11 +127,22 @@ private fun ServicePlayerMediaAudioView(
                 durationInMillis = player.duration.takeIf { it >= 0 } ?: 0L,
                 canMute = false,
                 isMuted = player.volume == 0f,
+                canSkipNext = player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
+                canSkipPrev = player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM),
             )
         )
     }
     // Track when playback is requested for a specific media ID
     var pendingPlaybackMediaId by remember { mutableStateOf<String?>(null) }
+
+    // Track the displayed filename — updated when service skips to a different file
+    var displayFilename: String? by remember { mutableStateOf(info?.filename) }
+    var displayFileExtension: String? by remember { mutableStateOf(info?.fileExtension) }
+    // Reset displayed info when the page-level info changes (user navigated)
+    LaunchedEffect(info?.filename) {
+        displayFilename = info?.filename
+        displayFileExtension = info?.fileExtension
+    }
 
     var metadata: MediaMetadata? by remember {
         mutableStateOf(null)
@@ -185,6 +196,21 @@ private fun ServicePlayerMediaAudioView(
                 // not from our notification metadata which has custom extras.
                 if (mediaMetadata.extras?.containsKey("sessionId") != true) {
                     metadata = mediaMetadata
+                }
+            }
+
+            override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
+                mediaPlayerControllerState = mediaPlayerControllerState.copy(
+                    canSkipNext = availableCommands.contains(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
+                    canSkipPrev = availableCommands.contains(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM),
+                )
+            }
+
+            override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
+                val title = mediaItem?.mediaMetadata?.title?.toString()
+                if (title != null) {
+                    displayFilename = title
+                    displayFileExtension = title.substringAfterLast('.', "")
                 }
             }
         }
@@ -353,6 +379,8 @@ private fun ServicePlayerMediaAudioView(
                     modifier = Modifier.padding(horizontal = 16.dp),
                     info = info,
                     metadata = metadata,
+                    displayFilename = displayFilename,
+                    displayFileExtension = displayFileExtension,
                 )
             }
         }
@@ -371,6 +399,8 @@ private fun ServicePlayerMediaAudioView(
             // Passing audioFocus here would cause a second AudioManager.requestAudioFocus() call
             // that conflicts with ExoPlayer's internal focus request, instantly pausing playback.
             audioFocus = null,
+            onSkipToNext = { player.seekToNext() },
+            onSkipToPrevious = { player.seekToPrevious() },
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
@@ -392,6 +422,8 @@ private fun ServicePlayerMediaAudioView(
 private fun AudioInfoView(
     info: MediaInfo?,
     metadata: MediaMetadata?,
+    displayFilename: String?,
+    displayFileExtension: String?,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -410,24 +442,29 @@ private fun AudioInfoView(
                 color = ElementTheme.colors.textPrimary
             )
         }
-        if (info != null) {
+        val filename = displayFilename ?: info?.filename
+        val fileExtension = displayFileExtension ?: info?.fileExtension
+        if (filename != null) {
             Spacer(modifier = Modifier.height(24.dp))
             Text(
-                text = info.filename,
+                text = filename,
                 maxLines = 2,
                 style = ElementTheme.typography.fontBodyLgRegular,
                 overflow = TextOverflow.Ellipsis,
                 textAlign = TextAlign.Center,
                 color = ElementTheme.colors.textPrimary
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = formatFileExtensionAndSize(info.fileExtension, info.formattedFileSize),
-                style = ElementTheme.typography.fontBodyMdRegular,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                color = ElementTheme.colors.textPrimary
-            )
+            if (fileExtension != null) {
+                val formattedFileSize = info?.formattedFileSize ?: ""
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = formatFileExtensionAndSize(fileExtension, formattedFileSize),
+                    style = ElementTheme.typography.fontBodyMdRegular,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = ElementTheme.colors.textPrimary
+                )
+            }
         }
     }
 }

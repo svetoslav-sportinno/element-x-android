@@ -111,6 +111,8 @@ private fun ServicePlayerMediaVideoView(
                 durationInMillis = player.duration.takeIf { it >= 0 } ?: 0L,
                 canMute = true,
                 isMuted = player.volume == 0f,
+                canSkipNext = player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
+                canSkipPrev = player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM),
             )
         )
     }
@@ -169,6 +171,13 @@ private fun ServicePlayerMediaVideoView(
             override fun onPlaybackStateChanged(playbackState: Int) {
                 mediaPlayerControllerState = mediaPlayerControllerState.copy(
                     isReady = playbackState == STATE_READY,
+                )
+            }
+
+            override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
+                mediaPlayerControllerState = mediaPlayerControllerState.copy(
+                    canSkipNext = availableCommands.contains(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
+                    canSkipPrev = availableCommands.contains(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM),
                 )
             }
         }
@@ -300,6 +309,14 @@ private fun ServicePlayerMediaVideoView(
             // Passing audioFocus here would cause a second AudioManager.requestAudioFocus() call
             // that conflicts with ExoPlayer's internal focus request, instantly pausing playback.
             audioFocus = null,
+            onSkipToNext = {
+                autoHideController++
+                player.seekToNext()
+            },
+            onSkipToPrevious = {
+                autoHideController++
+                player.seekToPrevious()
+            },
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
