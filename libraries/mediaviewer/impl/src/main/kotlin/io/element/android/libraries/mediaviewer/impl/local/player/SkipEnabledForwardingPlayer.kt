@@ -7,8 +7,10 @@
 
 package io.element.android.libraries.mediaviewer.impl.local.player
 
+import android.annotation.SuppressLint
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 
 /**
  * A [ForwardingPlayer] that adds skip next/previous media item support.
@@ -20,6 +22,8 @@ import androidx.media3.common.Player
  * When skip is not available, default player behavior is preserved (e.g.,
  * seekToPrevious seeks to the beginning of the current track).
  */
+@SuppressLint("UnsafeOptInUsageError")
+@OptIn(UnstableApi::class)
 class SkipEnabledForwardingPlayer(
     player: Player,
     private val onSkipToNext: () -> Unit,

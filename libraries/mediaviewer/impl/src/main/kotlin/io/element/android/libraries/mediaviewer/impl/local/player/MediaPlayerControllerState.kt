@@ -18,8 +18,6 @@ data class MediaPlayerControllerState(
     val durationInMillis: Long,
     val canMute: Boolean,
     val isMuted: Boolean,
-    val canSkipNext: Boolean = false,
-    val canSkipPrev: Boolean = false,
 ) {
     @FloatRange(from = 0.0, to = 1.0)
     val progressAsFloat = (progressInMillis.toFloat() / durationInMillis.toFloat()).coerceIn(0f, 1f)

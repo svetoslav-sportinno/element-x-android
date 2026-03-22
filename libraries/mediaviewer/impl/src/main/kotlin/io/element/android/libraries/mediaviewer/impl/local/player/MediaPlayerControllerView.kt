@@ -56,8 +56,6 @@ fun MediaPlayerControllerView(
     onToggleMute: () -> Unit,
     audioFocus: AudioFocus?,
     modifier: Modifier = Modifier,
-    onSkipToNext: (() -> Unit)? = null,
-    onSkipToPrevious: (() -> Unit)? = null,
 ) {
     if (audioFocus != null) {
         val latestOnTogglePlay by rememberUpdatedState(onTogglePlay)
@@ -93,18 +91,6 @@ fun MediaPlayerControllerView(
                     .widthIn(max = 480.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                if (state.canSkipPrev && onSkipToPrevious != null) {
-                    IconButton(
-                        onClick = onSkipToPrevious,
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Icon(
-                            imageVector = CompoundIcons.ChevronLeft(),
-                            tint = ElementTheme.colors.iconPrimary,
-                            contentDescription = stringResource(CommonStrings.action_back),
-                        )
-                    }
-                }
                 val bgColor = if (state.isPlaying) {
                     ElementTheme.colors.bgCanvasDefault
                 } else {
@@ -136,18 +122,7 @@ fun MediaPlayerControllerView(
                         )
                     }
                 }
-                if (state.canSkipNext && onSkipToNext != null) {
-                    IconButton(
-                        onClick = onSkipToNext,
-                        modifier = Modifier.size(36.dp),
-                    ) {
-                        Icon(
-                            imageVector = CompoundIcons.ChevronRight(),
-                            tint = ElementTheme.colors.iconPrimary,
-                            contentDescription = stringResource(CommonStrings.action_next),
-                        )
-                    }
-                }
+
                 Text(
                     modifier = Modifier
                         .widthIn(min = 48.dp)
@@ -218,7 +193,5 @@ internal fun MediaPlayerControllerViewPreview(
         onSeekChange = {},
         onToggleMute = {},
         audioFocus = null,
-        onSkipToNext = {},
-        onSkipToPrevious = {},
     )
 }

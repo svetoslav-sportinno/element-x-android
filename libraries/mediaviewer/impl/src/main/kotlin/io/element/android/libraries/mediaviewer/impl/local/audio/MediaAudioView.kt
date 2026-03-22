@@ -127,8 +127,6 @@ private fun ServicePlayerMediaAudioView(
                 durationInMillis = player.duration.takeIf { it >= 0 } ?: 0L,
                 canMute = false,
                 isMuted = player.volume == 0f,
-                canSkipNext = player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
-                canSkipPrev = player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM),
             )
         )
     }
@@ -199,16 +197,13 @@ private fun ServicePlayerMediaAudioView(
                 }
             }
 
-            override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
-                mediaPlayerControllerState = mediaPlayerControllerState.copy(
-                    canSkipNext = availableCommands.contains(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
-                    canSkipPrev = availableCommands.contains(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM),
-                )
-            }
-
             override fun onMediaItemTransition(mediaItem: androidx.media3.common.MediaItem?, reason: Int) {
                 val title = mediaItem?.mediaMetadata?.title?.toString()
-                if (title != null) {
+                // Only update displayFilename if the title matches the current page's expected filename,
+                // or if info is null (we don't have an expected filename).
+                // This prevents stale media item titles from overwriting the correct filename when swiping.
+                val expectedFilename = info?.filename
+                if (title != null && (expectedFilename == null || title == expectedFilename)) {
                     displayFilename = title
                     displayFileExtension = title.substringAfterLast('.', "")
                 }
@@ -216,7 +211,7 @@ private fun ServicePlayerMediaAudioView(
         }
     }
 
-    LaunchedEffect(player.isPlaying) {
+    LaunchedEffect(player.isPlaying, isDisplayed) {
         if (player.isPlaying) {
             while (true) {
                 mediaPlayerControllerState = mediaPlayerControllerState.copy(
@@ -234,7 +229,7 @@ private fun ServicePlayerMediaAudioView(
     val playbackContext = LocalMediaPlaybackContext.current
     val context = LocalContext.current
     if (localMedia?.uri != null && isDisplayed) {
-        LaunchedEffect(localMedia.uri) {
+        LaunchedEffect(localMedia.uri, isDisplayed) {
             val artworkSource = playbackContext.roomAvatarUrl?.let { MediaSource(it) }
             val artworkBytes = artworkSource?.let { source ->
                 tryOrNull {
@@ -399,8 +394,6 @@ private fun ServicePlayerMediaAudioView(
             // Passing audioFocus here would cause a second AudioManager.requestAudioFocus() call
             // that conflicts with ExoPlayer's internal focus request, instantly pausing playback.
             audioFocus = null,
-            onSkipToNext = { player.seekToNext() },
-            onSkipToPrevious = { player.seekToPrevious() },
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)

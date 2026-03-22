@@ -25,8 +25,6 @@ open class MediaPlayerControllerStateProvider : PreviewParameterProvider<MediaPl
         aMediaPlayerControllerState(
             isPlaying = true,
             progressInMillis = 30_000,
-            canSkipNext = true,
-            canSkipPrev = true,
         ),
     )
 }
@@ -40,8 +38,6 @@ private fun aMediaPlayerControllerState(
     durationInMillis: Long = 83_000,
     canMute: Boolean = true,
     isMuted: Boolean = false,
-    canSkipNext: Boolean = false,
-    canSkipPrev: Boolean = false,
 ) = MediaPlayerControllerState(
     isVisible = isVisible,
     isPlaying = isPlaying,
@@ -50,6 +46,4 @@ private fun aMediaPlayerControllerState(
     durationInMillis = durationInMillis,
     canMute = canMute,
     isMuted = isMuted,
-    canSkipNext = canSkipNext,
-    canSkipPrev = canSkipPrev,
 )

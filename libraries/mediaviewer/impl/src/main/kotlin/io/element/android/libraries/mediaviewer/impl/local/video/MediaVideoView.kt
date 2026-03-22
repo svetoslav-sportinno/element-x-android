@@ -111,8 +111,6 @@ private fun ServicePlayerMediaVideoView(
                 durationInMillis = player.duration.takeIf { it >= 0 } ?: 0L,
                 canMute = true,
                 isMuted = player.volume == 0f,
-                canSkipNext = player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
-                canSkipPrev = player.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM),
             )
         )
     }
@@ -173,16 +171,8 @@ private fun ServicePlayerMediaVideoView(
                     isReady = playbackState == STATE_READY,
                 )
             }
-
-            override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
-                mediaPlayerControllerState = mediaPlayerControllerState.copy(
-                    canSkipNext = availableCommands.contains(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM),
-                    canSkipPrev = availableCommands.contains(Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM),
-                )
             }
         }
-    }
-
     var autoHideController by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(autoHideController) {
@@ -197,7 +187,7 @@ private fun ServicePlayerMediaVideoView(
     val playbackContext = LocalMediaPlaybackContext.current
     val context = LocalContext.current
     if (localMedia?.uri != null && isDisplayed) {
-        LaunchedEffect(localMedia.uri) {
+        LaunchedEffect(localMedia.uri, isDisplayed) {
             val artworkBytes = playbackContext.thumbnailSource?.let { source ->
                 tryOrNull {
                     val request = ImageRequest.Builder(context)
@@ -220,7 +210,11 @@ private fun ServicePlayerMediaVideoView(
             val metadata = MediaMetadata.Builder()
                 .setTitle(localMedia.info.filename)
                 .setArtist(localMedia.info.senderName)
-                .apply { artworkBytes?.let { setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER) } }
+                .apply {
+                    artworkBytes?.let {
+                        setArtworkData(it, MediaMetadata.PICTURE_TYPE_FRONT_COVER)
+                    }
+                }
                 .setExtras(extras)
                 .build()
             val mediaId = playbackContext.eventId
@@ -309,14 +303,6 @@ private fun ServicePlayerMediaVideoView(
             // Passing audioFocus here would cause a second AudioManager.requestAudioFocus() call
             // that conflicts with ExoPlayer's internal focus request, instantly pausing playback.
             audioFocus = null,
-            onSkipToNext = {
-                autoHideController++
-                player.seekToNext()
-            },
-            onSkipToPrevious = {
-                autoHideController++
-                player.seekToPrevious()
-            },
             modifier = Modifier
                 .fillMaxWidth()
                 .align(Alignment.BottomCenter)
@@ -324,7 +310,7 @@ private fun ServicePlayerMediaVideoView(
         )
     }
 
-    LaunchedEffect(player.isPlaying) {
+    LaunchedEffect(player.isPlaying, isDisplayed) {
         if (player.isPlaying) {
             while (true) {
                 mediaPlayerControllerState = mediaPlayerControllerState.copy(

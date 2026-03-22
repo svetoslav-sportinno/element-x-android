@@ -143,9 +143,6 @@ fun MediaViewerView(
                 }
                 is MediaViewerPageData.MediaViewerData -> {
                     var bottomPaddingInPixels by remember { mutableIntStateOf(defaultBottomPaddingInPixels) }
-                    LaunchedEffect(Unit) {
-                        state.eventSink(MediaViewerEvents.LoadMedia(dataForPage))
-                    }
                     CompositionLocalProvider(
                         LocalMediaPlaybackContext provides MediaPlaybackContext(
                             sessionId = state.sessionId,
@@ -158,14 +155,24 @@ fun MediaViewerView(
                         Box(
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            val isDisplayed = remember(pagerState.settledPage) {
-                                // This 'item provider' lambda will be called when the data source
-                                // changes with an outdated `settlePage` value. So we need to update
-                                // this value only when the `settledPage` value changes.
-                                page == pagerState.settledPage
+                            // Track if this is the initial page to skip debounce on first load
+                            var hasLoadedOnce by remember { mutableStateOf(false) }
+                            val isSettledPage = page == pagerState.settledPage
+                            // Debounce download: wait for page to be settled and add delay to prevent
+                            // downloads during fast swiping (e.g., when quickly browsing through audio files)
+                            LaunchedEffect(isSettledPage) {
+                                if (isSettledPage && !hasLoadedOnce) {
+                                    // First load - no debounce
+                                    hasLoadedOnce = true
+                                    state.eventSink(MediaViewerEvents.LoadMedia(dataForPage))
+                                } else if (isSettledPage) {
+                                    // Subsequent loads - debounce
+                                    delay(300)
+                                    state.eventSink(MediaViewerEvents.LoadMedia(dataForPage))
+                                }
                             }
                             MediaViewerPage(
-                                isDisplayed = isDisplayed,
+                                isDisplayed = isSettledPage,
                                 showOverlay = showOverlay,
                                 bottomPaddingInPixels = bottomPaddingInPixels,
                                 data = dataForPage,
