@@ -104,6 +104,39 @@ internal fun MyComponentPreview() = ElementPreview {
 }
 ```
 
+## CRITICAL: Implementation Quality Checklist
+
+**Before declaring any feature or fix "done", you MUST complete this checklist. No exceptions. Skipping this has repeatedly caused embarrassing bugs that required multiple fix rounds.**
+
+### 1. Walk through EVERY user-visible surface
+A feature is not just the code — it's what the user sees. Before finishing, mentally walk through the ENTIRE user journey step by step:
+- What does the user see on screen? (in-app UI)
+- What does the notification show? (title, artwork, buttons, metadata)
+- What happens when they tap every control?
+- What happens when they background/foreground the app?
+- If data changes server-side or via service, does EVERY UI surface update? (not just the one you were focused on)
+
+### 2. If a feature spans multiple surfaces, check ALL of them
+When code touches a service AND a notification AND an in-app UI, all three must be updated together. Never implement one surface and forget the others. Examples:
+- Skip next/previous must update: notification metadata, notification artwork, in-app filename, in-app controls, deep link intent
+- Any metadata change must propagate to: service state, notification, in-app player state
+
+### 3. Verify assumptions — never guess with a comment
+Do NOT write `// SDK returns newest-first` without verifying it. If you're unsure about ordering, threading requirements, API behavior, or IPC boundaries — look it up in the actual code or docs first. A wrong assumption with a confident comment is worse than no comment at all.
+
+### 4. Think about what's MISSING, not just what compiles
+A build passing means nothing to the user. Ask yourself:
+- Are there buttons/controls the user would expect but I didn't add?
+- Does the UI show stale data after a state change?
+- Is artwork/metadata preserved across transitions?
+- Are there threading requirements I'm ignoring? (e.g., ExoPlayer requires main thread)
+
+### 5. Android-specific gotchas to always check
+- **ExoPlayer/Media3**: All player operations MUST happen on the main thread. Use `Dispatchers.Main` for any scope that touches the player.
+- **MediaMetadata.extras**: Does NOT cross the IPC boundary to MediaController. Only `title`, `artist`, `artworkData` are available on the controller side. Never rely on extras for UI state on the controller side.
+- **ForwardingPlayer**: Only ADD commands to available commands when your feature enables them. Never REMOVE default commands — it breaks existing behavior (like seek).
+- **Async initialization**: If data loads asynchronously, make sure the UI updates AFTER loading completes, not just at the moment you start loading.
+
 ## Testing
 
 Three testing frameworks:

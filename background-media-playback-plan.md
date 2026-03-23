@@ -345,21 +345,22 @@ Already handled by media3. No code needed:
 
 ## TASK 3: Video Background Audio-Only (depends on Task 1)
 
-> **Status: PARTIALLY DONE**
+> **Status: MOSTLY DONE** — code changes complete, needs device verification only.
 
-Task 1 removed the `ON_PAUSE` handler that killed playback on background. However, the video surface behavior needs attention.
+Task 1 removed the `ON_PAUSE` handler that killed playback on background. Subsequent commits removed all remaining `pause()` calls on `isDisplayed=false`, so both audio and video now continue playing when navigating away or backgrounding.
 
-### What was already done in Task 1
+### What was done
 
-- Removed `ON_PAUSE -> exoPlayer.pause()` from `MediaVideoView`
-- ExoPlayer now lives in the service, so it survives backgrounding
+- **Task 1**: Removed `ON_PAUSE -> exoPlayer.pause()` from `MediaVideoView`, moved ExoPlayer to service
+- **`5a2ce2006d`**: Removed `LaunchedEffect(isDisplayed) { if (!isDisplayed) player.pause() }` from both `MediaAudioView` and `MediaVideoView`. This was the last code path that auto-paused playback when the view became hidden.
+- **`fe427d1bd6`**: Added `// Note: We don't pause when isDisplayed=false because background playback is supported` comment in video auto-play logic, confirming the intentional behavior change.
 - `PlayerView.player = controller` works for video rendering via direct connection
 
-### What still needs to be done
+### What still needs device verification
 
-- Verify that when the app backgrounds, the `PlayerView` surface detaches gracefully and audio continues
-- If the `PlayerView` is disposed while backgrounded, ensure re-attaching when foregrounded works (the `AndroidView` factory creates a new `PlayerView` and sets `player = controller`)
-- Test edge case: background during video -> come back -> video surface re-renders
+- Video playing → press Home → verify audio continues, video surface detaches gracefully
+- Return to app → verify video surface re-renders and playback continues from correct position
+- Video playing → navigate to another room → return via notification deep link → verify media viewer opens with correct state
 
 ### Key consideration from Task 1
 
@@ -420,22 +421,70 @@ Since we used `MediaController` (which implements `Player`), state sync is large
 
 ## TASK 6: Skip Next/Previous in Room Timeline (depends on Tasks 1 + 2)
 
-> **Status: NOT STARTED — do after Tasks 1 and 2**
-> **Risk: HIGH** — requires the service layer to query the room's media timeline
+> **Status: DONE**
 
-### What needs to change
+### What was implemented
 
-- **New logic**: Query the room's media timeline for audio/video files (excluding voice messages), ordered chronologically
-- **Modify**: Service layer — needs access to the room's media timeline to resolve next/previous
-- **Modify**: `MediaSession` callback — wire next/previous actions to timeline navigation
-- **Modify**: Media viewer — if open, sync to the newly playing file
-- **Boundary behavior**: at last/first file, stop playback and dismiss
+Skip next/previous for audio and video files in the room timeline, both from the notification and in-app player.
 
-### Key consideration from Task 1
+### Files created
 
-The `MediaPlaybackService` currently has no knowledge of the room timeline or which media items exist. It only knows about the single `MediaItem` set by the UI. For skip to work, either:
-- The service needs a reference to the timeline data source
-- Or the UI (if open) handles skip commands and sets the next media item on the controller
+| File | Location | Purpose |
+|------|----------|---------|
+| **MediaPlaybackServiceBindings.kt** | `libraries/mediaviewer/impl/.../local/player/` | DI bindings interface for injecting `MatrixClientProvider` and `LocalMediaFactory` into the service. Uses `@ContributesTo(AppScope::class)` + `bindings<T>().inject(this)` pattern. |
+| **MediaPlaylistManager.kt** | `libraries/mediaviewer/impl/.../local/player/` | Service-internal playlist manager. Creates a `MediaOnlyFocused` timeline, filters to Audio+Video items, handles skip operations with file download, artwork loading, and pagination. Uses `Mutex` to serialize concurrent skips. |
+| **SkipEnabledForwardingPlayer.kt** | `libraries/mediaviewer/impl/.../local/player/` | `ForwardingPlayer` wrapper that adds `COMMAND_SEEK_TO_NEXT_MEDIA_ITEM`/`COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM` to available commands and delegates skip calls to callbacks. Falls through to `super` when skip is unavailable. |
+
+### Files modified
+
+| File | Change |
+|------|--------|
+| `MediaPlaybackService.kt` | DI injection via `bindings<>()`, service-scoped `CoroutineScope(Dispatchers.Main)`, wraps ExoPlayer in `SkipEnabledForwardingPlayer`, creates `MediaPlaylistManager`, auto-advance on `STATE_ENDED`, applies skip results on ExoPlayer directly |
+| `MediaPlayerControllerState.kt` | Added `canSkipNext: Boolean` and `canSkipPrev: Boolean` fields |
+| `MediaPlayerControllerView.kt` | Added `onSkipToNext`/`onSkipToPrevious` callbacks and ChevronLeft/ChevronRight skip buttons |
+| `MediaPlayerControllerStateProvider.kt` | Added preview state with skip buttons visible |
+| `MediaAudioView.kt` | Wired skip buttons, added `onAvailableCommandsChanged` + `onMediaItemTransition` listeners to update skip state and displayed filename on skip |
+| `MediaVideoView.kt` | Wired skip buttons, added `onAvailableCommandsChanged` listener |
+
+### Key architectural decisions
+
+1. **DI via `MediaPlaybackServiceBindings`** — follows the `VectorFirebaseMessagingServiceBindings` pattern. The service can't use constructor injection, so it uses `@Inject lateinit var` fields + `bindings<T>().inject(this)` in `onCreate()`.
+
+2. **`MediaOnlyFocused` timeline** — SDK API that creates a media-filtered timeline focused on the current event. Returns items in chronological order (oldest first). "Next" = higher index (newer), "Previous" = lower index (older).
+
+3. **Direct `EventContent` inspection** — `PlayableItem` extraction checks `MessageContent.type` for `AudioMessageType`/`VideoMessageType` directly, avoiding `EventItemFactory` and its transitive dependencies.
+
+4. **Artwork on skip** — downloads via `MatrixMediaLoader.loadMediaThumbnail()` (video thumbnail for video, room avatar for audio). Room avatar URL retrieved from `joinedRoom.info().avatarUrl` during initialization.
+
+5. **`Dispatchers.Main` for service scope** — ExoPlayer requires all operations on the main thread. The coroutine scope uses `SupervisorJob() + Dispatchers.Main`. Suspend functions (media download, timeline operations) internally dispatch to IO.
+
+6. **`SkipEnabledForwardingPlayer` only ADDs commands** — never removes default commands. When `canSkipNext`/`canSkipPrev` are false, `seekToNext()`/`seekToPrevious()` delegate to `super` (default "seek to beginning" behavior). This preserves normal seek behavior.
+
+7. **Async playlist loading with callback** — `MediaPlaylistManager.onPlayableItemsChanged` callback fires when timeline items are collected, triggering `updateSkipButtonState()`. Without this, skip buttons never appear because the initial `updateSkipButtonState()` runs before items load.
+
+### Lessons learned (CRITICAL for future tasks)
+
+#### ForwardingPlayer: only ADD commands, never REMOVE defaults
+Removing `COMMAND_SEEK_TO_PREVIOUS`/`COMMAND_SEEK_TO_NEXT` from available commands broke the default seek behavior (seeking within the current track). The notification's seek bar became unresponsive and the player got stuck in a paused state. Fix: only add skip commands when available, never remove commands that the wrapped player already reports.
+
+#### ExoPlayer threading: always use Dispatchers.Main
+`CoroutineScope(SupervisorJob())` defaults to `Dispatchers.Default`. Any coroutine that touches ExoPlayer (setMediaItem, prepare, play, or even updating ForwardingPlayer state that notifies listeners) MUST run on `Dispatchers.Main`. Using the wrong dispatcher causes silent state corruption — the player appears to work but gets stuck after the next interaction.
+
+#### Async state requires callbacks, not immediate reads
+When `playlistManager.initialize()` starts a coroutine to load timeline items, calling `updateSkipButtonState()` immediately after returns stale data (empty list). The fix is a callback pattern: `onPlayableItemsChanged` fires from within the `collect` block after items are populated. Any time you have "start async work then read its result," you need a notification mechanism.
+
+#### MediaMetadata.extras do NOT cross IPC — but title, artist, artworkData DO
+On the `MediaController` side, `mediaMetadata.extras` is always null. But `mediaMetadata.title`, `mediaMetadata.artist`, and `artworkData` ARE available. For filename updates in the in-app player after a service-side skip, use `onMediaItemTransition` and read `mediaItem.mediaMetadata.title`.
+
+#### Timeline item ordering varies by timeline mode
+The `MediaOnlyFocused` timeline returns items in chronological order (oldest first). Do NOT blindly `.reversed()` — verify ordering by testing. An incorrect assumption about ordering caused playback to go newest→oldest instead of oldest→newest.
+
+### Known limitations (out of scope)
+
+- **Media viewer UI does not sync page/pager on skip** — when the service skips, the HorizontalPager stays on the old page. The top bar (sender name, date) shows the old data. The audio player's filename DOES update via `onMediaItemTransition`. Full pager sync would require communication from service → presenter → pager state.
+- **No gapless playback** — brief pause during download between tracks.
+- **No pre-fetching** — next item is downloaded only when skip is triggered.
+- **No error retry** — if download fails, skip returns null → boundary behavior (stop).
 
 ---
 
@@ -472,10 +521,10 @@ The `MediaPlaybackService` currently has no knowledge of the room timeline or wh
 |---|---|---|---|
 | 1 - Foreground Service + MediaSession | — | Medium | **DONE** (PR #6351) |
 | 2 - MediaStyle Notification | Task 1 | Low | **DONE** (metadata, artwork, tap intent, dismiss) |
-| 3 - Video Background Audio | Task 1 | Low | Partially done |
+| 3 - Video Background Audio | Task 1 | Low | **MOSTLY DONE** (code complete, needs device verification) |
 | 4 - Voice Message Interaction | Task 1 | Low-Medium | Not started |
 | 5 - State Synchronization | Tasks 1, 2 | Medium | Not started |
-| 6 - Skip Next/Previous | Tasks 1, 2 | **High** | Not started |
+| 6 - Skip Next/Previous | Tasks 1, 2 | **High** | **DONE** (notification + in-app skip, auto-advance, artwork, filename sync) |
 | 7 - Stop Button + Navigation | Task 1 | Low | **PARTIALLY DONE** (notification tap → media viewer done; stop button remains) |
 
 ---
@@ -730,6 +779,46 @@ RoomNavigationTarget (sealed interface, Parcelable)
 
 `RoomNavigationTarget` flows through: `RootFlowNode` → `LoggedInFlowNode.attachRoom()` → `RoomFlowNode` → `JoinedRoomLoadedFlowNode.Inputs.initialElement` → `initialElement()` function → `NavTarget.Messages`.
 
+### Same-Item Playback Reset: Root Causes and Fixes (learned from post-Task 2 bug fixing)
+
+When the user taps a media file that is already playing, multiple code paths conspired to reset the player. Here are all the root causes discovered and fixed:
+
+**1. `MediaMetadata.extras` doesn't cross the IPC boundary** (`79dfc3b295`)
+- `player.currentMediaItem?.mediaMetadata?.extras` is always null on the `MediaController` side
+- **Fix**: Use `MediaItem.mediaId` (set to eventId) instead — it IS transmitted across the boundary
+- Set via `.setMediaId(playbackContext.eventId)` when building the `MediaItem`
+
+**2. `player.setMediaItems(emptyList())` clears playback when `localMedia` is null** (`4dbdf4f562`)
+- When opening a file, `localMedia` starts as null briefly (download not complete yet)
+- The `else` branch called `player.setMediaItems(emptyList())`, killing the playing item
+- **Fix**: Don't clear items when `localMedia` is null — they may still be playing in background
+
+**3. `player.pause()` on `isDisplayed=false` killed background playback** (`5a2ce2006d`)
+- Both audio and video views had `LaunchedEffect(isDisplayed) { if (!isDisplayed) player.pause() }`
+- When navigating away, `isDisplayed` becomes false → pause → playback stops
+- **Fix**: Remove the auto-pause entirely. Background playback should continue. Only stop on explicit user action or service destruction.
+
+**4. `playbackState != Player.STATE_IDLE` check was too restrictive** (`e02feaf6be`)
+- Original same-item check was `if (mediaId matches && playbackState != IDLE)`
+- After playback completed (STATE_ENDED), re-opening the same file would reset because STATE_ENDED != IDLE triggered the else branch
+- **Fix**: Only check `mediaId` match, don't check playback state
+
+**5. UI state not synced when same file is reopened** (`67ed1225be`)
+- When skipping `setMediaItem()` for a same-item match, the UI still showed `isPlaying = false` (hardcoded initial state)
+- **Fix**: When same item detected, sync `mediaPlayerControllerState` with actual `player.isPlaying` and `player.playbackState`
+
+**6. UI flicker during media transitions** (`fe427d1bd6`)
+- `MediaPlayerControllerState` was initialized with hardcoded defaults (`isPlaying = false`, `progressInMillis = 0`)
+- When `MediaController` connected, there was a brief flash of wrong state before the listener fired
+- **Fix**: Initialize from actual player state: `player.isPlaying`, `player.currentPosition`, `player.duration`, `player.volume`
+- Also added `pendingPlaybackMediaId` tracking: set BEFORE `setMediaItem()`, cleared on `onIsPlayingChanged`. This prevents the "paused" flicker between stopping old media and starting new media.
+
+**7. Redundant downloads in `MediaViewerDataSource`** (`fe427d1bd6`)
+- `downloadMedia()` would re-trigger even if the media was already downloaded or in progress
+- **Fix**: Early return if `localMediaState` is already `Success` or `Loading`
+
+**General principle**: When the service player is shared across the app, ANY code that modifies the player (setMediaItem, setMediaItems, pause, prepare) must first check whether the intended item is already loaded/playing. The `MediaController` is just a proxy — every call affects the single ExoPlayer in the service.
+
 ### Stopping the Service from UI
 
 **DO NOT use `rememberMediaServicePlayer()` in `MediaViewerView`**. It causes `NullPointerException` in Robolectric tests because `SessionToken` → `MediaControllerImplBase$SessionServiceConnection.onServiceConnected()` gets a null `ComponentName` from Robolectric's shadow service binding.
@@ -790,6 +879,40 @@ override fun onMediaMetadataChanged(mediaMetadata: MediaMetadata) {
 
 **This does NOT affect `MediaVideoView`** because the video player doesn't have a `metadata` state or `AudioInfoView`. The video `PlayerView` renders video frames directly.
 
+### Skip Next/Previous: Architecture (from Task 6)
+
+**Data flow for skip from notification:**
+```
+User taps Next → MediaSession → ForwardingPlayer.seekToNext()
+  → canSkipNext is true → onSkipToNext callback
+  → scope.launch { playlistManager.skipToNext() }
+    → find next PlayableItem in list (or paginate)
+    → matrixMediaLoader.downloadMediaFile()
+    → localMediaFactory.createFromMediaFile()
+    → matrixMediaLoader.loadMediaThumbnail() (artwork)
+    → build ExoPlayer MediaItem with metadata + artwork
+  → exoPlayer.setMediaItem(item) + prepare() + play()
+  → onMediaMetadataChanged fires → updateSessionActivity() updates deep link
+  → updateSkipButtonState() updates canSkipNext/canSkipPrev
+```
+
+**Data flow for skip from in-app player:**
+```
+User taps chevron → player.seekToNext() on MediaController
+  → MediaController sends to MediaSession → ForwardingPlayer.seekToNext()
+  → (same as notification flow above)
+  → MediaController receives onMediaItemTransition → displayFilename updates
+  → MediaController receives onAvailableCommandsChanged → skip buttons update
+```
+
+**Key files:**
+
+| File | Purpose |
+|------|---------|
+| `MediaPlaybackServiceBindings.kt` | DI bindings for service injection |
+| `MediaPlaylistManager.kt` | Playlist state, skip logic, file download, artwork |
+| `SkipEnabledForwardingPlayer.kt` | ForwardingPlayer wrapper for skip commands |
+
 ### Detekt / KtLint Gotchas
 
 1. **Import ordering**: KtLint requires lexicographic order, no empty lines between imports. Use `./gradlew ktlintFormat` to auto-fix.
@@ -823,7 +946,10 @@ The module does NOT depend on: `deeplink`, `push`, `mediaplayer` (voice messages
 
 | File | Path | Purpose |
 |------|------|---------|
-| MediaPlaybackService | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackService.kt` | Service owning ExoPlayer + MediaSession. Handles tap intent via `updateSessionActivity()`. |
+| MediaPlaybackService | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackService.kt` | Service owning ExoPlayer + MediaSession. DI injection, playlist manager, skip handling, auto-advance. |
+| MediaPlaybackServiceBindings | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackServiceBindings.kt` | DI bindings interface (`@ContributesTo(AppScope)`) for service injection |
+| MediaPlaylistManager | `libraries/mediaviewer/impl/.../local/player/MediaPlaylistManager.kt` | Playlist state from MediaOnlyFocused timeline, skip logic, file download, artwork loading, pagination |
+| SkipEnabledForwardingPlayer | `libraries/mediaviewer/impl/.../local/player/SkipEnabledForwardingPlayer.kt` | ForwardingPlayer that adds skip commands and delegates to callbacks |
 | MediaPlaybackServiceConnection | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackServiceConnection.kt` | `rememberMediaServicePlayer()` composable |
 | MediaPlaybackContext | `libraries/mediaviewer/impl/.../local/player/MediaPlaybackContext.kt` | `data class` + `LocalMediaPlaybackContext` CompositionLocal for navigation context + artwork |
 | ExoPlayerExtensions | `libraries/mediaviewer/impl/.../local/player/ExoPlayerExtensions.kt` | `Player.togglePlay()`, `Player.seekToEnsurePlaying()` |
